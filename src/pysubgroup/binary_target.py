@@ -7,6 +7,8 @@ from collections import namedtuple
 from functools import total_ordering
 
 import numpy as np
+import cupy as cp
+from pysubgroup import representations
 
 from pysubgroup.measures import (
     AbstractInterestingnessMeasure,
@@ -74,7 +76,10 @@ class BinaryTarget(BaseTarget):
         instances_subgroup = size_sg
         positives_dataset = np.sum(positives)
         instances_dataset = len(data)
-        positives_subgroup = np.sum(positives[cover_arr])
+        if isinstance(cover_arr, representations.CUDABitSet_Conj):
+            p=cp.asarray(positives)
+            positives_subgroup = cp.sum(cp.logical_and(cp.asarray(cover_arr), p != 0))
+        else: positives_subgroup = np.sum(positives[cover_arr])
         return (
             instances_dataset,
             positives_dataset,
@@ -134,6 +139,7 @@ class SimplePositivesQF(
     def calculate_constant_statistics(self, data, target):
         assert isinstance(target, BinaryTarget)
         self.positives = target.covers(data)
+        self.cuda_positives=cp.asarray(self.positives)
         self.dataset_statistics = SimplePositivesQF.tpl(
             len(data), np.sum(self.positives)
         )
@@ -145,6 +151,9 @@ class SimplePositivesQF(
         cover_arr, size_sg = get_cover_array_and_size(
             subgroup, len(self.positives), data
         )
+        
+        if isinstance (cover_arr, representations.CUDABitSet_Conj):
+            return SimplePositivesQF.tpl(size_sg, cp.sum(cp.logical_and(cp.asarray(cover_arr), self.cuda_positives != 0)))
         return SimplePositivesQF.tpl(
             size_sg, np.count_nonzero(self.positives[cover_arr])
         )

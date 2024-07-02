@@ -1,4 +1,9 @@
 import numpy as np
+import cupy as cp
+from numba import cuda
+import cudf
+import pandas as pd
+
 
 from pysubgroup.subgroup_description import Conjunction, Disjunction
 
@@ -101,6 +106,87 @@ class BitSetRepresentation(RepresentationBase):
 
     def patch_classes(self):
         BitSet_Conjunction.n_instances = len(self.df)
+        super().patch_classes()
+        
+class CUDABitSet_Conj(Conjunction):
+    n_instances = 0
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.representation = self.compute_representation()
+        
+    def compute_representation(self):
+        if not self.selectors:
+            return cp.full(self.n_instances, True, dtype=bool)
+        return cp.all([sel.representation for sel in self.selectors], axis=0)
+    
+    def append_and(self, to_append):
+        super().append_and(to_append)
+        self.representation = cp.logical_and(self.representation, to_append.representation)
+        
+    @property
+    def size_sg(self):
+        return cp.count_nonzero(self.representation)
+    
+    @property
+    def __array_interface__(self):
+        return self.representation.__cuda_array_interface__
+    
+    @property
+    def __cuda_array_interface__(self):
+        return self.representation.__cuda_array_interface__
+        
+    
+class CUDABitSet_Disj(Disjunction):
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.representation = self.compute_representation()
+        
+    def compute_representation(self):
+        if not self.selectors:
+            return cp.full(CUDABitSet_Conj.n_instances, False, dtype=bool)
+        return cp.any([sel.representation for sel in self.selectors],axis=0)
+    
+    def append_or(self, to_append):
+        super().append_or(to_append)
+        self.representation=cp.logical_or(self.representation, to_append.representation)
+        
+    @property
+    def size_sg(self):
+        return cp.count_nonzero(self.representation)
+    
+    @property
+    def __array_interface__(self):
+        return self.representation.__cuda_array_interface__
+    
+    @property
+    def __cuda_array_interface__(self):
+        return self.representation.__cuda_array_interface__
+        
+    
+class CUDABitSetRepr(RepresentationBase):
+    Conjunction = CUDABitSet_Conj
+    Disjunction = CUDABitSet_Disj
+    
+    def __init__(self, df, selectors_to_patch):
+        #convert data to cudf right here, only need to do it once then
+        if isinstance(df, cudf.DataFrame):
+            dataframe=df
+        elif any (pd.api.types.is_sparse(dtype) for dtype in df.dtypes):
+            dataframe=cudf.DataFrame.from_pandas(df.sparse.to_dense())
+        else:
+            dataframe = cudf.DataFrame.from_pandas(df)
+        self.df=dataframe
+        super().__init__(CUDABitSet_Conj, selectors_to_patch)
+    
+    def patch_selector(self, sel):
+        #sel.representation=sel.cudaCovers(self.df)
+        import pandas as pd  # pylint: disable=import-outside-toplevel
+        sel.representation = sel.cudaCovers(self.df)
+        sel.size_sg = cp.count_nonzero(sel.representation)
+    
+    def patch_classes(self):
+        CUDABitSet_Conj.n_instances=len(self.df)
         super().patch_classes()
 
 

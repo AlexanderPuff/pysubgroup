@@ -8,6 +8,9 @@ import weakref
 from abc import ABC, abstractmethod
 from functools import total_ordering
 from itertools import chain
+import cupy as cp
+from numba import cuda
+import cudf
 
 import numpy as np
 
@@ -216,6 +219,21 @@ class EqualitySelector(SelectorBase):
         if pd.isnull(self.attribute_value):
             return pd.isnull(row)
         return row == self.attribute_value
+    
+    #return cupy array as there is no implicit conversion like with pandas and numpy
+    def cudaCovers(self, data):
+        column = data[self.attribute_name]
+        res = column == self.attribute_value
+        #missing values are replaced with FALSE, for now
+        return cp.asarray(res.fillna(False))
+        
+        #otherwise, use CPU covers() and copy result to GPU; convert sparse data if needed
+        #else:
+        #    res=self.covers(data)
+        #    if isinstance(res.dtype, pd.SparseDtype):
+        #        res=res.to_dense()
+        #    return cp.asarray(res)
+            
 
     def __str__(self, open_brackets="", closing_brackets=""):
         return open_brackets + self._string + closing_brackets
@@ -253,6 +271,9 @@ class NegatedSelector(SelectorBase):
 
     def covers(self, data_instance):
         return np.logical_not(self._selector.covers(data_instance))
+    
+    def cudaCovers(self, data_instance):
+        return cp.logical_not(self._selector.cudaCovers(data_instance))
 
     def __repr__(self):
         return self._query
@@ -301,6 +322,13 @@ class IntervalSelector(SelectorBase):
     def covers(self, data_instance):
         val = data_instance[self.attribute_name].to_numpy()
         return np.logical_and((val >= self.lower_bound), (val < self.upper_bound))
+    
+    def cudaCovers(self, data_instance):
+        column = data_instance[self.attribute_name]
+        lower = (column >= self.lower_bound).fillna(False)
+        upper = (column < self.upper_bound).fillna(False)
+        return cp.logical_and(cp.asarray(lower),cp.asarray(upper))
+        
 
     def __repr__(self):
         return self._query

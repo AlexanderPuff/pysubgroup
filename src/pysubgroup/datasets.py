@@ -2,6 +2,7 @@ from io import StringIO
 
 import pandas as pd
 import pkg_resources
+import cudf
 from scipy.io import arff
 
 
@@ -17,3 +18,9 @@ def get_titanic_data():
         str(pkg_resources.resource_string("pysubgroup", "data/titanic.csv"), "utf-8")
     )
     return pd.read_csv(s_io, sep="\t", header=[0])
+    
+def get_titanic_gpu():
+    s_io = StringIO(
+        str(pkg_resources.resource_string("pysubgroup", "data/titanic.csv"), "utf-8")
+    )
+    return pd.read_csv(s_io, sep="\t", header=0)
