@@ -9,18 +9,29 @@ import datetime
 
 
 
+def get_data(filepath):
+    s_io = StringIO(
+        str(pkg_resources.resource_string("pysubgroup", filepath), "utf-8")
+    )
+    return pd.read_csv(s_io, sep="\t", header=0, nrows=1000000)
+
 def get_data_gpu(filepath):
     s_io = StringIO(
         str(pkg_resources.resource_string("pysubgroup", filepath), "utf-8")
     )
-    return pd.read_csv(s_io, sep="\t", header=0, nrows=100000)
+    return cudf.read_csv(s_io, sep="\t", header=0, nrows=1000000)
 
 synth="data/synthetic/synth_titanic.csv"
 normal="data/titanic.csv"
 
-data=get_data_gpu(normal)
+gpu_data= get_data_gpu(synth)
+cpu_data=get_data(synth)
+a=datetime.datetime.now()
+searchspace=ps.create_selectors(cpu_data, ignore=['Survived'])
+print(datetime.datetime.now()-a)
 
-if(True):
+
+def measureCPU(data):
     target= ps.BinaryTarget('Survived', True)
     searchspace=ps.create_selectors(data, ignore=['Survived'])
     task = ps.SubgroupDiscoveryTask (
@@ -34,9 +45,21 @@ if(True):
     result=ps.DFS(ps.BitSetRepresentation).execute(task)
     b = datetime.datetime.now()
     print(b-a)
+    
+def measureGPU(data):
+    target= ps.BinaryTarget('Survived', True)
+    searchspace=ps.create_selectors(data, ignore=['Survived'])
+    task = ps.SubgroupDiscoveryTask (
+            data,
+            target,
+            searchspace,
+            result_set_size=10,
+            depth=2,
+            qf=ps.WRAccQF())
+    a = datetime.datetime.now()
     result=ps.DFS(ps.CUDABitSetRepr).execute(task)
-    c = datetime.datetime.now()
-    print(c-b)
+    b = datetime.datetime.now()
+    print(b-a)
 
 
 if(False):

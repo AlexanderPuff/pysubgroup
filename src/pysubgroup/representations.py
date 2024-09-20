@@ -170,18 +170,12 @@ class CUDABitSetRepr(RepresentationBase):
     
     def __init__(self, df, selectors_to_patch):
         #convert data to cudf right here, only need to do it once then
-        if isinstance(df, cudf.DataFrame):
-            dataframe=df
-        elif any (pd.api.types.is_sparse(dtype) for dtype in df.dtypes):
-            dataframe=cudf.DataFrame.from_pandas(df.sparse.to_dense())
-        else:
-            dataframe = cudf.DataFrame.from_pandas(df)
-        self.df=dataframe
+        if not isinstance(df, cudf.DataFrame): 
+            raise TypeError("use a cudf dataframe for gpu acceleration")
+        self.df=df
         super().__init__(CUDABitSet_Conj, selectors_to_patch)
     
     def patch_selector(self, sel):
-        #sel.representation=sel.cudaCovers(self.df)
-        import pandas as pd  # pylint: disable=import-outside-toplevel
         sel.representation = sel.cudaCovers(self.df)
         sel.size_sg = cp.count_nonzero(sel.representation)
     

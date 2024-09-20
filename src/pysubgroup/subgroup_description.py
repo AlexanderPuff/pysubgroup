@@ -9,12 +9,12 @@ from abc import ABC, abstractmethod
 from functools import total_ordering
 from itertools import chain
 import cupy as cp
-from numba import cuda
-import cudf
-
+#from numba import cuda
+#import cudf
 import numpy as np
-
+from dftype import DataFrameConfig, ensure_df_type_set
 import pysubgroup as ps
+#from pysubgroup.dftype import DataFrameConfig, ensure_df_type_set
 
 
 @total_ordering
@@ -222,19 +222,13 @@ class EqualitySelector(SelectorBase):
     
     #return cupy array as there is no implicit conversion like with pandas and numpy
     def cudaCovers(self, data):
-        column = data[self.attribute_name]
-        res = column == self.attribute_value
-        #missing values are replaced with FALSE, for now
-        return cp.asarray(res.fillna(False))
+        #column = data[self.attribute_name]
+        #res = column == self.attribute_value
+        #return cp.asarray(res.fillna(False))
         
-        #otherwise, use CPU covers() and copy result to GPU; convert sparse data if needed
-        #else:
-        #    res=self.covers(data)
-        #    if isinstance(res.dtype, pd.SparseDtype):
-        #        res=res.to_dense()
-        #    return cp.asarray(res)
-            
-
+        #missing values are replaced with FALSE, for now
+        return cp.fromDlpack((data[self.attribute_name] == self.attribute_value).fillna(False).to_dlpack())
+    
     def __str__(self, open_brackets="", closing_brackets=""):
         return open_brackets + self._string + closing_brackets
 
@@ -325,9 +319,9 @@ class IntervalSelector(SelectorBase):
     
     def cudaCovers(self, data_instance):
         column = data_instance[self.attribute_name]
-        lower = (column >= self.lower_bound).fillna(False)
-        upper = (column < self.upper_bound).fillna(False)
-        return cp.logical_and(cp.asarray(lower),cp.asarray(upper))
+        lower = cp.fromDlpack((column >= self.lower_bound).fillna(False).to_dlpack())
+        upper = cp.fromDlpack((column < self.upper_bound).fillna(False).to_dlpack())
+        return cp.logical_and(lower, upper)
         
 
     def __repr__(self):
@@ -421,13 +415,18 @@ class IntervalSelector(SelectorBase):
     def selectors(self):
         return (self,)
 
-
+@ensure_df_type_set
 def create_selectors(data, nbins=5, intervals_only=True, ignore=None):
     if ignore is None:
         ignore = []
     sels = create_nominal_selectors(data, ignore)
     sels.extend(create_numeric_selectors(data, nbins, intervals_only, ignore=ignore))
     return sels
+
+#TODO: entry point for horizontal parallelization
+@ensure_df_type_set
+def create_gpu_selectors(data, nbins=5, intervals_only=True, ignore=None):
+    pass
 
 
 def create_nominal_selectors(data, ignore=None):
@@ -442,10 +441,16 @@ def create_nominal_selectors(data, ignore=None):
     nominal_dtypes = data.select_dtypes(exclude=["number"])
     dtypes = data.dtypes
     # print(dtypes)
-    for attr_name in [x for x in nominal_dtypes.columns.values if x not in ignore]:
-        nominal_selectors.extend(
-            create_nominal_selectors_for_attribute(data, attr_name, dtypes)
-        )
+    if DataFrameConfig.is_pandas():
+        for attr_name in [x for x in nominal_dtypes.columns.values if x not in ignore]:
+            nominal_selectors.extend(
+                create_nominal_selectors_for_attribute(data, attr_name, dtypes)
+            )
+    if DataFrameConfig.is_cudf():
+        for attr_name in [x for x in nominal_dtypes.columns.values if x not in ignore]:
+            nominal_selectors.extend(
+                gpu_create_nominal_selectors_for_attribute(data, attr_name, dtypes)
+            )
     return nominal_selectors
 
 
@@ -463,6 +468,18 @@ def create_nominal_selectors_for_attribute(data, attribute_name, dtypes=None):
             s.is_bool = True
     return nominal_selectors
 
+def gpu_create_nominal_selectors_for_attribute(data, attribute_name, dtypes=None):
+    import cudf
+    nominal_selectors=[]
+    for val in data[attribute_name].unique().to_pandas().dropna():
+        nominal_selectors.append(EqualitySelector(attribute_name, val))
+    if dtypes is None:
+        dtypes = data.dtypes
+    if dtypes[attribute_name] == "bool":
+        for s in nominal_selectors:
+            s.is_bool = True
+    return nominal_selectors
+
 
 def create_numeric_selectors(
     data, nbins=5, intervals_only=True, weighting_attribute=None, ignore=None
@@ -470,16 +487,28 @@ def create_numeric_selectors(
     if ignore is None:
         ignore = []  # pragma: no cover
     numeric_selectors = []
-    for attr_name in [
-        x
-        for x in data.select_dtypes(include=["number"]).columns.values
-        if x not in ignore
-    ]:
-        numeric_selectors.extend(
-            create_numeric_selectors_for_attribute(
-                data, attr_name, nbins, intervals_only, weighting_attribute
+    if DataFrameConfig.is_pandas():
+        for attr_name in [
+            x
+            for x in data.select_dtypes(include=["number"]).columns.values
+            if x not in ignore
+        ]:
+            numeric_selectors.extend(
+                create_numeric_selectors_for_attribute(
+                    data, attr_name, nbins, intervals_only, weighting_attribute
+                )
             )
-        )
+    if DataFrameConfig.is_cudf():
+        for attr_name in [
+            x
+            for x in data.select_dtypes(include=["number"]).columns.values
+            if x not in ignore
+        ]:
+            numeric_selectors.extend(
+                gpu_create_numeric_selectors_for_attribute(
+                    data, attr_name, nbins, intervals_only, weighting_attribute
+                )
+            )
     return numeric_selectors
 
 
@@ -527,7 +556,38 @@ def create_numeric_selectors_for_attribute(
 
     return numeric_selectors
 
+def gpu_create_numeric_selectors_for_attribute(
+    data, attr_name, nbins=5, intervals_only=True, weighting_attribute=None
+):
+    numeric_selectors = []
+    #cuDF does not support sparse dtypes, skip first IF from above
+    data_not_null = data[data[attr_name].notnull()]
+    uniqueValues = cp.unique(data_not_null[attr_name])
+    if len(data_not_null)<len(data):
+        numeric_selectors.append(EqualitySelector(attr_name, cp.nan))
+    if len(uniqueValues)<=nbins:
+        for val in uniqueValues:
+            numeric_selectors.append(EqualitySelector(attr_name, val))
+    else:
+        cutpoints = ps.equal_frequency_discretization(
+            data, attr_name, nbins, weighting_attribute
+        )
+        if intervals_only:
+            old_cutpoint = float("-inf")
+            for c in cutpoints:
+                numeric_selectors.append(IntervalSelector(attr_name, old_cutpoint, c))
+                old_cutpoint = c
+            numeric_selectors.append(
+                IntervalSelector(attr_name, old_cutpoint, float("inf"))
+            )
+        else:
+            for c in cutpoints:
+                numeric_selectors.append(IntervalSelector(attr_name, c, float("inf")))
+                numeric_selectors.append(IntervalSelector(attr_name, float("-inf"), c))
 
+    return numeric_selectors
+    
+        
 def remove_target_attributes(selectors, target):
     return [
         sel for sel in selectors if sel.attribute_name not in target.get_attributes()

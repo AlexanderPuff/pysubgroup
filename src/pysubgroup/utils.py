@@ -13,6 +13,7 @@ import numpy as np
 import pysubgroup as ps
 
 from .algorithms import SubgroupDiscoveryTask
+from .dftype import ensure_df_type_set, DataFrameConfig
 
 
 def minimum_required_quality(result, task):
@@ -30,6 +31,7 @@ def prepare_subgroup_discovery_result(result, task):
 
 
 # Returns the cutpoints for discretization
+@ensure_df_type_set
 def equal_frequency_discretization(
     data, attribute_name, nbins=5, weighting_attribute=None
 ):
@@ -40,6 +42,8 @@ def equal_frequency_discretization(
         cleaned_data = data[attribute_name]
         if isinstance(data[attribute_name].dtype, pd.SparseDtype):
             cleaned_data = data[attribute_name].sparse.sp_values
+        if DataFrameConfig.is_cudf():
+            cleaned_data = cleaned_data.to_pandas()
 
         cleaned_data = cleaned_data[~np.isnan(cleaned_data)]
         sorted_data = sorted(cleaned_data)
