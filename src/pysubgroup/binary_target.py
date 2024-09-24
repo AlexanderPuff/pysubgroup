@@ -15,6 +15,7 @@ from pysubgroup.measures import (
     BoundedInterestingnessMeasure,
     GeneralizationAwareQF_stats,
 )
+from dftype import ensure_df_type_set, DataFrameConfig
 
 from .subgroup_description import EqualitySelector, get_cover_array_and_size
 from .utils import BaseTarget, derive_effective_sample_size
@@ -69,17 +70,19 @@ class BinaryTarget(BaseTarget):
 
     def get_attributes(self):
         return (self.target_selector.attribute_name,)
-
+    
+    #TODO: ensure dataframe type is set
     def get_base_statistics(self, subgroup, data):
         cover_arr, size_sg = get_cover_array_and_size(subgroup, len(data), data)
-        positives = self.covers(data)
+        positives = self.target_selector.covers(data)
         instances_subgroup = size_sg
-        positives_dataset = np.sum(positives)
+        if DataFrameConfig.is_cudf():
+            positives_dataset = cp.count_nonzero(positives)
+            positives_subgroup = cp.count_nonzero(cp.logical_and(cover_arr, positives))
+        else:
+            positives_dataset = np.sum(positives)
+            positives_subgroup = np.sum(positives[cover_arr])
         instances_dataset = len(data)
-        if isinstance(cover_arr, representations.CUDABitSet_Conj):
-            p=cp.asarray(positives)
-            positives_subgroup = cp.sum(cp.logical_and(cp.asarray(cover_arr), p != 0))
-        else: positives_subgroup = np.sum(positives[cover_arr])
         return (
             instances_dataset,
             positives_dataset,
@@ -136,11 +139,17 @@ class SimplePositivesQF(
         self.has_constant_statistics = False
         self.required_stat_attrs = ("size_sg", "positives_count")
 
+    @ensure_df_type_set
     def calculate_constant_statistics(self, data, target):
         assert isinstance(target, BinaryTarget)
-        self.positives = target.covers(data)
-        self.cuda_positives=cp.asarray(self.positives)
-        self.dataset_statistics = SimplePositivesQF.tpl(
+        if DataFrameConfig.is_cudf():
+            self.positives = target.target_selector.covers(data)
+            self.dataset_statistics = SimplePositivesQF.tpl(
+            len(data), cp.sum(self.positives)
+        )
+        else:
+            self.positives = target.covers(data)
+            self.dataset_statistics = SimplePositivesQF.tpl(
             len(data), np.sum(self.positives)
         )
         self.has_constant_statistics = True
@@ -151,10 +160,10 @@ class SimplePositivesQF(
         cover_arr, size_sg = get_cover_array_and_size(
             subgroup, len(self.positives), data
         )
-        
-        if isinstance (cover_arr, representations.CUDABitSet_Conj):
-            return SimplePositivesQF.tpl(size_sg, cp.sum(cp.logical_and(cp.asarray(cover_arr), self.cuda_positives != 0)))
-        return SimplePositivesQF.tpl(
+        if DataFrameConfig.is_cudf():
+            return SimplePositivesQF.tpl(size_sg, cp.count_nonzero(cp.logical_and(cover_arr, self.positives)))
+        else:
+            return SimplePositivesQF.tpl(
             size_sg, np.count_nonzero(self.positives[cover_arr])
         )
 
@@ -361,11 +370,12 @@ class StandardQF(SimplePositivesQF, BoundedInterestingnessMeasure):
         if not hasattr(instances_subgroup, "__array_interface__") and (
             instances_subgroup == 0
         ):
+            #if DataFrameConfig.is_cudf: return cp.nan
             return np.nan
-        p_subgroup = np.divide(positives_subgroup, instances_subgroup)
-        # if instances_subgroup == 0:
-        #    return 0
-        # p_subgroup = positives_subgroup / instances_subgroup
+        #p_subgroup = np.divide(positives_subgroup, instances_subgroup)
+        if instances_subgroup == 0:
+            return 0
+        p_subgroup = positives_subgroup / instances_subgroup
         p_dataset = positives_dataset / instances_dataset
         return (instances_subgroup / instances_dataset) ** a * (p_subgroup - p_dataset)
 

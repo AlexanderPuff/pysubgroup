@@ -9,6 +9,7 @@ from collections import Counter, defaultdict, namedtuple
 from heapq import heappop, heappush
 from itertools import chain, combinations
 from math import factorial
+from dftype import ensure_df_type_set, DataFrameConfig
 
 import numpy as np
 
@@ -522,10 +523,12 @@ class DFS:
     Implementation of a depth-first-search
     with look-ahead using a provided datastructure.
     """
-
+    @ensure_df_type_set
     def __init__(self, apply_representation=None):
         self.target_bitset = None
-        if apply_representation is None:
+        if DataFrameConfig.is_cudf():
+            apply_representation = ps.CUDABitSetRepr
+        elif apply_representation is None:
             apply_representation = ps.BitSetRepresentation
         self.apply_representation = apply_representation
         self.operator = None
@@ -551,7 +554,9 @@ class DFS:
         optimistic_estimate = task.qf.optimistic_estimate(
             sg, task.target, task.data, statistics
         )
-        if not optimistic_estimate > ps.minimum_required_quality(result, task):
+        #if still open spaces: check if opt.est. at least as big as minimum
+        #else: check if opt.est. at least as good as worst sg so far
+        if not optimistic_estimate > ps.minimum_required_quality(result, task): 
             return
         quality = task.qf.evaluate(sg, task.target, task.data, statistics)
         ps.add_if_required(result, sg, quality, task, statistics=statistics)

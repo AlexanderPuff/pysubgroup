@@ -117,7 +117,7 @@ class CUDABitSet_Conj(Conjunction):
     def compute_representation(self):
         if not self.selectors:
             return cp.full(self.n_instances, True, dtype=bool)
-        return cp.all([sel.representation for sel in self.selectors], axis=0)
+        return cp.all(cp.stack([sel.representation for sel in self.selectors]), axis=0)
     
     def append_and(self, to_append):
         super().append_and(to_append)
@@ -169,14 +169,13 @@ class CUDABitSetRepr(RepresentationBase):
     Disjunction = CUDABitSet_Disj
     
     def __init__(self, df, selectors_to_patch):
-        #convert data to cudf right here, only need to do it once then
         if not isinstance(df, cudf.DataFrame): 
             raise TypeError("use a cudf dataframe for gpu acceleration")
         self.df=df
         super().__init__(CUDABitSet_Conj, selectors_to_patch)
     
     def patch_selector(self, sel):
-        sel.representation = sel.cudaCovers(self.df)
+        sel.representation = sel.covers(self.df)
         sel.size_sg = cp.count_nonzero(sel.representation)
     
     def patch_classes(self):
