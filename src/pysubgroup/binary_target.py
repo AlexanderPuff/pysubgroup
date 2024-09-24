@@ -15,7 +15,7 @@ from pysubgroup.measures import (
     BoundedInterestingnessMeasure,
     GeneralizationAwareQF_stats,
 )
-from dftype import ensure_df_type_set, DataFrameConfig
+from .dftype import ensure_df_type_set, DataFrameConfig
 
 from .subgroup_description import EqualitySelector, get_cover_array_and_size
 from .utils import BaseTarget, derive_effective_sample_size

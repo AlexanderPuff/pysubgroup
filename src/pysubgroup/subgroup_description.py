@@ -11,7 +11,7 @@ from itertools import chain
 import cudf
 import cupy as cp
 import numpy as np
-from dftype import DataFrameConfig, ensure_df_type_set
+from .dftype import DataFrameConfig, ensure_df_type_set
 import pysubgroup as ps
 
 
