@@ -8,6 +8,7 @@ import weakref
 from abc import ABC, abstractmethod
 from functools import total_ordering
 from itertools import chain
+import cudf
 import cupy as cp
 import numpy as np
 from dftype import DataFrameConfig, ensure_df_type_set
@@ -162,9 +163,15 @@ class EqualitySelector(SelectorBase):
 
         # TODO: this is redundant due to `__new__` and `set_descriptions`
         self._attribute_name = attribute_name
-        self._attribute_value = attribute_value
         self._selector_name = selector_name
-        self.set_descriptions(
+        if DataFrameConfig.is_cudf():
+            self._attribute_value = cudf.Series([attribute_value])
+            self.set_descriptions(
+            self._attribute_name, attribute_value, self._selector_name
+        )
+        else:
+            self._attribute_value = attribute_value
+            self.set_descriptions(
             self._attribute_name, self._attribute_value, self._selector_name
         )
 
@@ -208,7 +215,7 @@ class EqualitySelector(SelectorBase):
     @ensure_df_type_set
     def covers(self, data):
         if DataFrameConfig.is_cudf():
-            return cp.fromDlpack((data[self.attribute_name] == self.attribute_value).fillna(False).to_dlpack())
+            return cp.fromDlpack((data[self.attribute_name] == self.attribute_value.iloc[0]).fillna(False).to_dlpack())
         else:
             import pandas as pd  # pylint: disable=import-outside-toplevel
 
@@ -289,9 +296,13 @@ class IntervalSelector(SelectorBase):
     def __init__(self, attribute_name, lower_bound, upper_bound, selector_name=None):
         assert lower_bound < upper_bound
         # TODO: this is redundant due to `__new__` and `set_descriptions`
+        if DataFrameConfig.is_cudf():
+            self._lower_bound = cudf.Series([lower_bound])
+            self._upper_bound = cudf.Series([upper_bound])
+        else:
+            self._lower_bound = lower_bound
+            self._upper_bound = upper_bound
         self._attribute_name = attribute_name
-        self._lower_bound = lower_bound
-        self._upper_bound = upper_bound
         self.selector_name = selector_name
         self.set_descriptions(attribute_name, lower_bound, upper_bound, selector_name)
 
@@ -313,8 +324,8 @@ class IntervalSelector(SelectorBase):
     def covers(self, data_instance):
         if DataFrameConfig.is_cudf():
             column = data_instance[self.attribute_name]
-            lower = cp.fromDlpack((column >= self.lower_bound).fillna(False).to_dlpack())
-            upper = cp.fromDlpack((column < self.upper_bound).fillna(False).to_dlpack())
+            lower = cp.fromDlpack((column >= self.lower_bound.iloc[0]).fillna(False).to_dlpack())
+            upper = cp.fromDlpack((column < self.upper_bound.iloc[0]).fillna(False).to_dlpack())
             return cp.logical_and(lower, upper)
         else:
             val = data_instance[self.attribute_name].to_numpy()
@@ -447,7 +458,7 @@ def create_nominal_selectors(data, ignore=None):
 def create_nominal_selectors_for_attribute(data, attribute_name, dtypes=None):
     nominal_selectors = []
     if DataFrameConfig.is_cudf():
-        for val in data[attribute_name].unique().to_pandas().dropna():
+        for val in data[attribute_name].unique().dropna().to_pandas():
             nominal_selectors.append(EqualitySelector(attribute_name, val))
     else:
         import pandas as pd  # pylint: disable=import-outside-toplevel
@@ -579,6 +590,11 @@ class Conjunction(BooleanExpressionBase):
 
     def covers(self, instance):
         # empty description ==> return a list of all '1's
+        if DataFrameConfig.is_cudf():
+            if not self.selectors:
+                return cp.full(len(instance), True, dtype=bool)
+            return cp.all(cp.stack([sel.covers(instance) for sel in self._selectors]), axis=0)
+        
         if not self._selectors:
             return np.full(len(instance), True, dtype=bool)
         # non-empty description

@@ -9,7 +9,7 @@ from collections import Counter, defaultdict, namedtuple
 from heapq import heappop, heappush
 from itertools import chain, combinations
 from math import factorial
-from dftype import ensure_df_type_set, DataFrameConfig
+from .dftype import ensure_df_type_set, DataFrameConfig
 
 import numpy as np
 
@@ -82,7 +82,6 @@ class Apriori:
         self, representation_type=None, combination_name="Conjunction", use_numba=True
     ):
         self.combination_name = combination_name
-
         if representation_type is None:
             representation_type = ps.BitSetRepresentation
         self.representation_type = representation_type

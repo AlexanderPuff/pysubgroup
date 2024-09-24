@@ -7,7 +7,7 @@ import itertools
 from collections.abc import Iterable
 from functools import partial
 from heapq import heappop, heappush
-
+import cupy as cp
 import numpy as np
 
 import pysubgroup as ps
@@ -43,11 +43,12 @@ def equal_frequency_discretization(
         if isinstance(data[attribute_name].dtype, pd.SparseDtype):
             cleaned_data = data[attribute_name].sparse.sp_values
         if DataFrameConfig.is_cudf():
-            cleaned_data = cleaned_data.to_pandas()
-
-        cleaned_data = cleaned_data[~np.isnan(cleaned_data)]
-        sorted_data = sorted(cleaned_data)
-        number_instances = len(sorted_data)
+            sorted_data = cp.sort(cp.fromDlpack((cleaned_data).dropna().to_dlpack()))
+            number_instances = len(sorted_data)
+        else:
+            cleaned_data = cleaned_data[~np.isnan(cleaned_data)]
+            sorted_data = sorted(cleaned_data)
+            number_instances = len(sorted_data)
         for i in range(1, nbins):
             position = i * number_instances // nbins
             while True:
