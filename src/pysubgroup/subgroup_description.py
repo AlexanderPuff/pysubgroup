@@ -424,7 +424,9 @@ class IntervalSelector(SelectorBase):
         return (self,)
 
 @ensure_df_type_set
-def create_selectors(data, nbins=5, intervals_only=True, ignore=None):
+def create_selectors(data, nbins=5, intervals_only=True, ignore=None, gpu_full = False):
+    if gpu_full:
+        return ps.create_selectors_on_GPU(data, nbins, intervals_only, ignore)
     if ignore is None:
         ignore = []
     sels = create_nominal_selectors(data, ignore)

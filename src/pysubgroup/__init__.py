@@ -12,3 +12,4 @@ from pysubgroup.representations import *
 from pysubgroup.subgroup_description import *
 from pysubgroup.utils import *
 from pysubgroup.visualization import *
+from pysubgroup.horizontal import *
