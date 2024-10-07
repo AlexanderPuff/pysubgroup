@@ -165,6 +165,7 @@ class SimplePositivesQF(
         else:
             return SimplePositivesQF.tpl(
             size_sg, np.count_nonzero(self.positives[cover_arr])
+            
         )
 
     # <<< GpGrowth >>>
