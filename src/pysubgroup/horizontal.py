@@ -1,5 +1,5 @@
 import datetime
-import math
+import numpy as np
 import pysubgroup as ps	
 import cupy as cp
 import cudf
@@ -48,16 +48,15 @@ class gpu_search_space:
                 continue
             #create categorical selector
             elif len(uniques)<=nbins:
-                selectors.append(cudf.DataFrame({"id" : cp.arange(self.sel_id, self.sel_id + len(uniques)),
+                selectors.append(cudf.DataFrame({"id" : cp.arange(self.sel_id, self.sel_id + len(uniques), dtype=cp.uint16),
                                               "attribute" : attribute,
                                               "low" : uniques,
                                               "high": 0,
                                               "type" : "categorical"}))
+                self.sel_id += len(uniques)
                 data = cp.from_dlpack(self.data[attribute].to_dlpack()).reshape(-1,1)
                 uniques = uniques.reshape(1,-1)
                 representations.append(data == uniques)
-                
-                self.sel_id += len(uniques)
             #create interval selectors
             else:
                 sorted_data = cp.sort(cp.from_dlpack((self.data[attribute]).to_dlpack()))
@@ -69,7 +68,7 @@ class gpu_search_space:
                 else:
                     values = cp.append(values, cp.inf)
                 if len(values) > 1:
-                    selectors.append(cudf.DataFrame({"id" : cp.arange(self.sel_id, self.sel_id + len(values)-1),
+                    selectors.append(cudf.DataFrame({"id" : cp.arange(self.sel_id, self.sel_id + len(values)-1, dtype = cp.uint16),
                                                      "attribute" : attribute,
                                                      "low" : values[:-1],
                                                      "high": values[1:],
@@ -147,43 +146,6 @@ class statistics_GPU:
     def compute_optimistic(self, statistics, a):
         return statistics['relative_size_sg'].pow(a).multiply(1-self.constant_stats['target_share_dataset'].iloc[0])
     
-    #TODO: delete this failed experiment
-    #subgroups should alredy be in int format  
-    def compute_stats_subgroups(self, subgroups, batch_size = 0):
-        
-        nr_cols = self.search_space.representations.shape[1]
-        nr_ins = self.search_space.representations.shape[0]
-        nr_sgs = subgroups.shape[0]
-        
-        if batch_size == 0:
-            batch_size = set_optimal_batch_size(nr_cols, nr_sgs)
-        
-        arr_sg = ~subgroups
-        arr_pos = arr_sg.copy()
-        arr_pos[:,0] = cp.bitwise_and(arr_pos[:,0],cp.uint64(0xFFFFFFFFFFFFFFFE))
-        arr_sg=arr_sg.reshape(1, nr_sgs, nr_cols)
-        arr_pos=arr_pos.reshape(1, nr_sgs, nr_cols)
-        cnt = cp.zeros(shape = nr_sgs, dtype = int)
-        pos = cp.zeros(shape = nr_sgs, dtype = int)
-        
-        #divide representations of selectors into (vertical) batches, OR with negative of selectors subgroup holds: If a selector is not in it, set data to True, otherwise keep its value. Then see if all values are true -> if yes, instance is in sg, otherwise it's not. Repeat for positives by modifying first column.
-        for i in range(0,nr_ins,batch_size):
-            print(i)
-            batch_arr = self.search_space.representations[i:i+batch_size,:]
-            batch_arr=batch_arr.reshape(-1, 1, nr_cols)
-            
-            
-            mask_cnt = cp.bitwise_or(batch_arr, arr_sg) == cp.uint64(0xFFFFFFFFFFFFFFFF)
-            mask_pos = cp.bitwise_or(batch_arr, arr_pos) == cp.uint64(0xFFFFFFFFFFFFFFFF)
-            
-            batch_cnt = cp.sum(cp.sum(mask_cnt, axis=2) == nr_cols, axis=0)
-            batch_pos = cp.sum(cp.sum(mask_pos, axis=2) == nr_cols, axis=0)
-            
-            cnt += batch_cnt
-            pos += batch_pos
-        
-        statistics = self.compute_stats(cnt, pos)
-        return statistics
     
     def sel_conjunction_quality(self, sels, a):
         cover_arr = cp.all(self.search_space.reps[sels], axis = 0)
@@ -199,16 +161,8 @@ class statistics_GPU:
         statistics = self.compute_stats(cnt, pos)
         return statistics
     
-
-    
-    def add_sel(self, old_arr, sel, a):
-        new_arr = (old_arr & self.search_space.reps[:,sel] )
-        cnt = cp.count_nonzero(new_arr)
-        pos = cp.count_nonzero(new_arr[self.search_space.target_repr])
-        stats = self.compute_stats(cnt, pos)
-        return self.compute_quality(stats, a).iloc[0], new_arr
-    
-    def add_sels(self, old_arr, sels, a):
+    def add_sels(self, parent, sels, a):
+        old_arr = self.get_cover_arr_sels(parent[parent != 0])
         new_arrs = (old_arr & self.search_space.reps[sels])
         cnts = cp.sum(new_arrs, axis=1)
         poss = cp.sum(new_arrs & self.search_space.reps[0], axis=1)
@@ -220,37 +174,39 @@ class statistics_GPU:
         
         q = self.compute_quality(stats, a)
         o = self.compute_optimistic(stats, a)
-        return q.to_arrow().to_pylist(), o.to_arrow().to_pylist(), new_arrs
+        return q, o
+    
+    #every sg here should have same depth
+    def compute_quality_optimistic(self, sgs, a):
+        depth = cp.sum(sgs[0] != 0).item()
+        reps = self.search_space.reps[sgs[:,0]]
+        for d in range(1,depth):
+            reps = reps & self.search_space.reps[sgs[:,d]]
+        cnt = cp.sum(reps, axis=1)
+        pos = cp.sum(reps & reps[0], axis=1)
+        
+        stats = cudf.DataFrame()
+        stats['size_sg'] = cnt
+        stats['positives_sg'] = pos
+        stats['relative_size_sg'] = stats['size_sg'].truediv(self.constant_stats['size_dataset'].iloc[0])
+        stats['target_share_sg'] = stats['positives_sg'] / stats['size_sg']
+        
+        q = self.compute_quality(stats, a)
+        o = self.compute_optimistic(stats, a)
+        return q, o
     
     def get_cover_arr_sels(self, sels):
         cover_arr = cp.all(self.search_space.reps[sels], axis = 0)
         return cover_arr
-        
-        
-        
- 
-    
-#TODO: don't need these anymore
-#convert boolean dataframe to int64 cupy array   
-def bool_to_int(bool_array):
-    #bool_array = cp.array(df.values)
-    num_int64 = (bool_array.shape[1] + 63) // 64
-    result = cp.zeros(shape=(bool_array.shape[0], num_int64), dtype=cp.uint64)
-    for i in range(num_int64):
-        start_col = i * 64
-        end_col = min((i+1) * 64, bool_array.shape[1])
-        chunk = bool_array[:,start_col:end_col]
-        bit_mask = 2 ** cp.arange(chunk.shape[1], dtype=cp.uint64)
-        result[:, i] = (chunk * bit_mask).sum(axis=1, dtype=cp.uint64)
-    return result
-    
-def set_optimal_batch_size(nr_cols, nr_sgs, safety = 1):
-    available_mem = cp.cuda.runtime.memGetInfo()[0]
-    slice_size = nr_cols * nr_sgs * 16
-    return math.floor((available_mem*safety) // slice_size)
 
 
 #testing area
+def copy_df(df, num_copies):
+    df_list = [df.copy() for _ in range(num_copies)]
+    large_df = cudf.concat(df_list, ignore_index=True)
+    large_df.index=cudf.Series(np.arange(len(large_df)))
+    return large_df
+    
 if __name__ == '__main__':
     folder = '/home/alexpuff/datasets'
     spam_csv = '/synth_spam.csv'
@@ -266,22 +222,16 @@ if __name__ == '__main__':
     if True:
         start = datetime.datetime.now()
         df = cudf.read_csv(folder+spam_csv,sep="\t", header=0, nrows = 5000000)
-        print(f"Data loaded: {datetime.datetime.now() - start}")
-        sp = gpu_search_space(df, 'Class', 1, 2, spam_ignore)
-        a = datetime.datetime.now()
-        task = ps.gpu_task(sp, 1, depth=3, result_set_size=10)
-        dfs = ps.gpu_dfs(task)
-        res = dfs.execute(caching=False)
-        print(res.iloc[0])
-        print(f"Execution time: {datetime.datetime.now() - a}")
-    #df = cudf.DataFrame({'a' : [1,2,3], 'b' : [4,5,6]})
-    #arr = cp.array([1,2])
-    #print(df['a'].to_cupy().reshape(-1,1) == arr.reshape(1,-1))
-    
-        
-    
-    
-    
-    #NUMBA_CUDA_DRIVER="/usr/lib/wsl/lib/libcuda.so.1"
+        #df = copy_df(df, 2)
+        loaded = datetime.datetime.now()
+        print(f"Data loaded: {loaded - start}")
+        sp = gpu_search_space(df, 'Class', 1, 5, spam_ignore)
+        task = ps.gpu_task(sp, 1, depth=2, result_set_size=10)
+        bfs = ps.gpu_bfs(task)
+        sp_created = datetime.datetime.now()
+        print(f'Search space created: {sp_created - loaded}')
+        print(bfs.execute()['subgroup'])
+        print(f"Execution time: {datetime.datetime.now() - sp_created}")
+        print(f"Total time: {datetime.datetime.now() - start}")
         
     
