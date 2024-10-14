@@ -62,12 +62,12 @@ class gpu_search_space:
                 sorted_data = cp.sort(cp.from_dlpack((self.data[attribute]).to_dlpack()))
                 maximum = sorted_data[-1]+1
                 values = cp.unique(sorted_data.take(indices))
-                
-                if values.dtype == cp.int_:
-                    values = cp.append(values, maximum)
-                else:
-                    values = cp.append(values, cp.inf)
+                #sometimes there are no cutpoints, for example when almost all values are bundled up around an extreme
                 if len(values) > 1:
+                    if values.dtype == cp.int_:
+                        values = cp.append(values, maximum)
+                    else:
+                        values = cp.append(values, cp.inf)
                     selectors.append(cudf.DataFrame({"id" : cp.arange(self.sel_id, self.sel_id + len(values)-1, dtype = cp.uint16),
                                                      "attribute" : attribute,
                                                      "low" : values[:-1],
@@ -183,7 +183,7 @@ class statistics_GPU:
         for d in range(1,depth):
             reps = reps & self.search_space.reps[sgs[:,d]]
         cnt = cp.sum(reps, axis=1)
-        pos = cp.sum(reps & reps[0], axis=1)
+        pos = cp.sum(reps & self.search_space.reps[0], axis=1)
         
         stats = cudf.DataFrame()
         stats['size_sg'] = cnt
@@ -221,16 +221,16 @@ if __name__ == '__main__':
     
     if True:
         start = datetime.datetime.now()
-        df = cudf.read_csv(folder+spam_csv,sep="\t", header=0, nrows = 5000000)
+        df = cudf.read_csv(folder+darwin_csv,sep="\t", header=0, nrows = 5000)
         #df = copy_df(df, 2)
         loaded = datetime.datetime.now()
         print(f"Data loaded: {loaded - start}")
-        sp = gpu_search_space(df, 'Class', 1, 5, spam_ignore)
-        task = ps.gpu_task(sp, 1, depth=2, result_set_size=10)
-        bfs = ps.gpu_bfs(task)
+        sp = gpu_search_space(df, 'class', 'H', 10, darwin_ignore)
+        task = ps.gpu_task(sp, 1, depth=3, result_set_size=10)
+        bfs = ps.gpu_bfs(task, apriori=False)
         sp_created = datetime.datetime.now()
         print(f'Search space created: {sp_created - loaded}')
-        print(bfs.execute()['subgroup'])
+        print(bfs.execute())
         print(f"Execution time: {datetime.datetime.now() - sp_created}")
         print(f"Total time: {datetime.datetime.now() - start}")
         

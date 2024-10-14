@@ -1,3 +1,4 @@
+import datetime
 import cudf
 import cupy as cp
 import numpy as np
@@ -77,18 +78,23 @@ class visited_vector:
     
 class gpu_algorithm:
     
-    def __init__(self, gpu_task):
+    def __init__(self, gpu_task, apriori):
         self.task = gpu_task
         self.selectors = self.task.search_space.sels
         self.nr_sels = len(self.selectors)
         self.instances = self.task.search_space.instances
         self.quality = self.task.qf
         self.stats = self.task.search_space.stats
-        self.result = cudf.DataFrame({'quality': float("-inf")})
+        self.result = cudf.DataFrame({'quality': 0})
         for i in range(self.task.depth):
             col_name = f'sel_{i}'
             self.result[col_name] = 0
         self.visited = visited_vector(self.nr_sels, self.task.depth)
+        self.apriori = apriori
+        if apriori:
+            self.apriori_vec = visited_vector(self.nr_sels, self.task.depth)
+        else:
+            self.apriori_vec = None
         
     
     def eval_children(self, parent, sels, depth):
@@ -111,7 +117,6 @@ class gpu_algorithm:
             
         
         self.result = cudf.concat([self.result, to_add])
-        #self.result.drop_duplicates(subset=lst,inplace=True)
         self.result = self.result.sort_values(by='quality', ascending=False).nlargest(self.task.result_set_size, columns='quality')
         return to_explore
     
@@ -141,7 +146,25 @@ class gpu_algorithm:
         result2_df['target_share_complement'] = stats['target_share_complement']
         result2_df['target_share_dataset'] = positives_dataset/self.instances
         result2_df['lift'] = stats['lift']
-        return pandas.concat([result1_df, result2_df.to_pandas()], axis=1)
+        df = pandas.concat([result1_df, result2_df.to_pandas()], axis=1)
+        return df.round(
+        {
+            "quality": 3,
+            "size_sg": 0,
+            "size_dataset": 0,
+            "positives_sg": 0,
+            "positives_dataset": 0,
+            "size_complement": 0,
+            "relative_size_sg": 3,
+            "relative_size_complement": 3,
+            "coverage_sg": 3,
+            "coverage_complement": 3,
+            "target_share_sg": 3,
+            "target_share_complement": 3,
+            "target_share_dataset": 3,
+            "lift": 3,
+        }
+    )
     
     def sels_to_string(self, sels):
         strings = [self.sel_to_string(sel) for sel in sels if sel != 0]
@@ -150,27 +173,33 @@ class gpu_algorithm:
     def sel_to_string(self, sel):
         selector = self.selectors.loc[sel]
         att = selector['attribute'].iloc[0]
-        low , high = selector['low'].iloc[0], selector['high'].iloc[0]
+        low , high = round(selector['low'].iloc[0],3), round(selector['high'].iloc[0],3)
         if selector['type'].eq('categorical').any():
-            return f"{att} == {low}"
+            return att + '==' + str(low)
         else:
-            return f"{att}: [{low}, {high}["
+            return att + ':[' + str(low) + ',' + str(high) + '['
         
     
 class gpu_dfs(gpu_algorithm):
-    def __init__(self, gpu_task):
-        super().__init__(gpu_task)
-        self.visited = visited_vector(self.nr_sels, self.task.depth)
+    def __init__(self, gpu_task, apriori=False):
+        super().__init__(gpu_task, apriori)
         
     def execute(self):
         stack =cp.array([[0]*self.task.depth] , dtype=cp.uint16)
         self.visited.set_visited(cp.array([[0]*self.task.depth]))
         
         while stack.size > 0:
+            
             current = stack[-1]
+            print(current)
             stack = stack[:-1]
             depth = cp.sum(current != 0)
             new_sels = get_child_sels(current, self.selectors)
+            if self.apriori:
+                new_sels = apriori_pruning_dfs(current, new_sels, self.apriori_vec)
+            #If all children could get pruned, skip this node
+            if new_sels.size == 0:
+                continue
             children, qualities, optimistics = self.eval_children(current, new_sels, depth)
             vis = self.visited.is_visited(children)
             children=children[~vis]                
@@ -178,13 +207,17 @@ class gpu_dfs(gpu_algorithm):
             optimistics=optimistics[~vis]
             self.visited.set_visited(children)
             addeds = self.add_if_required(children, qualities, optimistics)
+            
             if depth < self.task.depth - 1:
                 stack = cp.append(stack, children[addeds], axis = 0)
+                if self.apriori:
+                    self.apriori_vec.set_visited(children[~addeds])
+                    
         return self.prepare_result(self.result)
     
 class gpu_bfs(gpu_algorithm):
-    def __init__(self, gpu_task):
-        super().__init__(gpu_task)
+    def __init__(self, gpu_task, apriori = False):
+        super().__init__(gpu_task, apriori)
         self.int_attributes = self.sels_attributes_ints()
         
     def sels_attributes_ints(self):
@@ -199,6 +232,7 @@ class gpu_bfs(gpu_algorithm):
         #level 1 is just the selectors themselves:
         sg_1  = cp.zeros((self.nr_sels-1,self.task.depth), dtype=cp.uint16)
         sg_1[:,0]=cp.arange(1,self.nr_sels)
+        self.visited.set_visited(sg_1)
         #calculated stats already
         stats_1 = self.stats.compute_stats_sels().drop([0])
         q_1 = self.stats.compute_quality(stats_1, self.quality)
@@ -207,34 +241,47 @@ class gpu_bfs(gpu_algorithm):
         #unlikely but just in case:
         min_q = self.result['quality'].min()
         to_add = sg_1[o_1 > min_q]
+        if self.apriori:
+            self.apriori_vec.set_visited(to_add)
         sg_levels.append(to_add)
+        
         #iterate through levels
         for depth in range(2, self.task.depth+1):
             parents = sg_levels[depth-1]
             parent_cs = chunk_size_parents(self.nr_sels)
             child_cs = chunk_size_children(self.instances)
-            #iterate through chunks for making children
             sg_depth = []
+            
+            #chunk making children, this is very memory intensive and apriori might eliminate enough sgs in the process to keep discovery going
+            children=[]
             for i in range(0, parents.shape[0], parent_cs):
-                parent_chunk = parents[i:i+parent_cs]
-                children = get_next_level(parent_chunk, self.int_attributes, depth, self.visited)
-                #iterate through chunks for sg evaluation
-                for j in range(0, children.shape[0], child_cs):
-                    chunk = children[j:j+child_cs]
-                    chunk = remove_duplicates(chunk, self.visited)
-                    if chunk.size == 0:
-                        continue
-                    qualities, optimistics = self.stats.compute_quality_optimistic(chunk, self.quality)
-                    to_explore = self.add_if_required(chunk, qualities, optimistics)
-                    sg_depth.append(chunk[to_explore])
-                    print(f'explored {j} out of {children.shape[0]}')
-                sg_levels.append(cp.concatenate(sg_depth, axis=0))
+                chunk = parents[i:i+parent_cs]
+                new_children = get_next_level(chunk, self.int_attributes, depth, self.visited)
+                if self.apriori:
+                    new_children = apriori_pruning_bfs(new_children, self.apriori_vec, depth)
+                children.append(new_children)
+                print(parent_cs)
+            
+            children=cp.concatenate(children, axis=0)
+                  
+            #iterate through chunks for sg evaluation
+            for j in range(0, children.shape[0], child_cs):
+                chunk = children[j:j+child_cs]
+                chunk = remove_dupes(chunk, self.visited)
+                if chunk.size == 0:
+                    continue
+                qualities, optimistics = self.stats.compute_quality_optimistic(chunk,self.quality)
+                to_explore = self.add_if_required(chunk, qualities, optimistics)
+                if self.apriori:
+                    self.apriori_vec.set_visited(chunk[to_explore])
+                sg_depth.append(chunk[to_explore])
+                print(f'explored {j} out of {children.shape[0]}')
+                    
+            sg_levels.append(cp.concatenate(sg_depth, axis=0))
+                
+                
         return self.prepare_result(self.result)
-        
-        
-class gpu_apriori(gpu_algorithm):
-    def __init__(self, gpu_task):
-        super().__init__(gpu_task)                         
+                       
     
 def get_child_sels(parent, sels):
     attributes = sels.loc[parent]['attribute'].unique()
@@ -253,24 +300,42 @@ def get_next_level(parents, sels, depth, vec):
     for i in range(depth-1):
         attributes_i = sels[children[:,i]]
         mask &= attributes_i != added_att
-    children = children[mask]
+    children = children[mask]  
     return children
 
 def chunk_size_parents(nr_sels, safety = .8):
     mem = cp.cuda.runtime.memGetInfo()[0]
-    sg_size = 128 #rough estimate, best performance somewhere around this value
-    return int((mem*safety)/(sg_size*nr_sels))
+    return int((mem*safety)/(nr_sels*8))
 
 def chunk_size_children(nr_instances, safety = .8):
     mem = cp.cuda.runtime.memGetInfo()[0]
-    sg_size = nr_instances*4
+    sg_size = nr_instances*3
     return int((mem*safety)/(sg_size))
 
-def remove_duplicates(children, vec):
+def remove_dupes(children, vec):
     children = children[~vec.is_visited(children)]
     hashes = vec._vectorized_hash(children)
     vec.set_visited_hashed(hashes)
     _, ids = cp.unique(hashes, return_index=True)
     return children[ids]
     
-    
+#for bfs: check if all depth-1 subsets are frequent
+def apriori_pruning_bfs(sgs, apriori_vec, depth):
+    keep = cp.ones((sgs.shape[0]), dtype=bool)
+    for d in range(depth):
+        to_check = cp.copy(sgs)
+        to_check[:,d] = 0
+        keep &= apriori_vec.is_visited(to_check)
+    return sgs[keep]
+
+#for dfs: check if no depth-1 subset is infrequent
+def apriori_pruning_dfs(sg, sels, apriori_vec):
+    remove = cp.zeros(sels.shape[0], dtype=bool)
+    depth = sg[sg!=0].shape[0]
+    for d in range(depth):
+        to_check = cp.copy(sg)
+        to_check = cp.tile(to_check, (sels.shape[0],1))
+        to_check[:,d] = sels
+        remove = remove | apriori_vec.is_visited(to_check)
+        
+    return sels[~remove]
