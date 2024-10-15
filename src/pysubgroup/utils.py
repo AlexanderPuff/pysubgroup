@@ -7,13 +7,13 @@ import itertools
 from collections.abc import Iterable
 from functools import partial
 from heapq import heappop, heappush
+import cudf
 import cupy as cp
 import numpy as np
 
 import pysubgroup as ps
 
 from .algorithms import SubgroupDiscoveryTask
-from .dftype import ensure_df_type_set, DataFrameConfig
 
 
 def minimum_required_quality(result, task):
@@ -31,7 +31,7 @@ def prepare_subgroup_discovery_result(result, task):
 
 
 # Returns the cutpoints for discretization
-@ensure_df_type_set
+
 def equal_frequency_discretization(
     data, attribute_name, nbins=5, weighting_attribute=None
 ):
@@ -42,7 +42,7 @@ def equal_frequency_discretization(
         cleaned_data = data[attribute_name]
         if isinstance(data[attribute_name].dtype, pd.SparseDtype):
             cleaned_data = data[attribute_name].sparse.sp_values
-        if DataFrameConfig.is_cudf():
+        if isinstance(cleaned_data, cudf.Series):
             sorted_data = cp.sort(cp.fromDlpack((cleaned_data).dropna().to_dlpack()))
             number_instances = len(sorted_data)
         else:
@@ -58,7 +58,6 @@ def equal_frequency_discretization(
                 if val not in cutpoints:
                     break
                 position += 1
-            # print (sorted_data [position])
             if val not in cutpoints:
                 cutpoints.append(val)
     else:

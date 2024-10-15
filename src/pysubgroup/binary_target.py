@@ -6,6 +6,7 @@ Created on 29.09.2017
 from collections import namedtuple
 from functools import total_ordering
 
+import cudf
 import numpy as np
 import cupy as cp
 from pysubgroup import representations
@@ -15,7 +16,6 @@ from pysubgroup.measures import (
     BoundedInterestingnessMeasure,
     GeneralizationAwareQF_stats,
 )
-from .dftype import ensure_df_type_set, DataFrameConfig
 
 from .subgroup_description import EqualitySelector, get_cover_array_and_size
 from .utils import BaseTarget, derive_effective_sample_size
@@ -76,7 +76,7 @@ class BinaryTarget(BaseTarget):
         cover_arr, size_sg = get_cover_array_and_size(subgroup, len(data), data)
         positives = self.target_selector.covers(data)
         instances_subgroup = size_sg
-        if DataFrameConfig.is_cudf():
+        if isinstance(data, cudf.DataFrame):
             positives_dataset = cp.count_nonzero(positives)
             positives_subgroup = cp.count_nonzero(cp.logical_and(cover_arr, positives))
         else:
@@ -139,10 +139,9 @@ class SimplePositivesQF(
         self.has_constant_statistics = False
         self.required_stat_attrs = ("size_sg", "positives_count")
 
-    @ensure_df_type_set
     def calculate_constant_statistics(self, data, target):
         assert isinstance(target, BinaryTarget)
-        if DataFrameConfig.is_cudf():
+        if isinstance(data, cudf.DataFrame):
             self.positives = target.target_selector.covers(data)
             self.dataset_statistics = SimplePositivesQF.tpl(
             len(data), cp.sum(self.positives)
@@ -160,7 +159,7 @@ class SimplePositivesQF(
         cover_arr, size_sg = get_cover_array_and_size(
             subgroup, len(self.positives), data
         )
-        if DataFrameConfig.is_cudf():
+        if isinstance(data, cudf.DataFrame):
             return SimplePositivesQF.tpl(size_sg, cp.count_nonzero(cp.logical_and(cover_arr, self.positives)))
         else:
             return SimplePositivesQF.tpl(

@@ -9,8 +9,8 @@ from collections import Counter, defaultdict, namedtuple
 from heapq import heappop, heappush
 from itertools import chain, combinations
 from math import factorial
-from .dftype import ensure_df_type_set, DataFrameConfig
 
+import cudf
 import numpy as np
 
 import pysubgroup as ps
@@ -85,7 +85,7 @@ class Apriori:
         if representation_type is None:
             representation_type = ps.BitSetRepresentation
         self.representation_type = representation_type
-        self.use_vectorization = True
+        self.use_vectorization = False
         self.optimistic_estimate_name = "optimistic_estimate"
         self.next_level = self.get_next_level
         self.compiled_func = None
@@ -196,6 +196,8 @@ class Apriori:
         ]
 
     def execute(self, task):
+        if isinstance(task.data, cudf.DataFrame):
+            self.representation_type = ps.CUDABitSetRepr
         if not isinstance(
             task.qf, ps.BoundedInterestingnessMeasure
         ):  # pragma: no cover
@@ -522,12 +524,9 @@ class DFS:
     Implementation of a depth-first-search
     with look-ahead using a provided datastructure.
     """
-    @ensure_df_type_set
     def __init__(self, apply_representation=None):
         self.target_bitset = None
-        if DataFrameConfig.is_cudf():
-            apply_representation = ps.CUDABitSetRepr
-        elif apply_representation is None:
+        if apply_representation is None:
             apply_representation = ps.BitSetRepresentation
         self.apply_representation = apply_representation
         self.operator = None
@@ -536,6 +535,9 @@ class DFS:
         )
 
     def execute(self, task):
+        #if data is cudf, choose cuda bitset as representation automatically
+        if isinstance(task.data, cudf.DataFrame):
+            self.apply_representation = ps.CUDABitSetRepr
         self.operator = ps.StaticSpecializationOperator(task.search_space)
         task.qf.calculate_constant_statistics(task.data, task.target)
         result = []

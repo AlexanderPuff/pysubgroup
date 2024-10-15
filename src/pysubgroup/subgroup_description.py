@@ -11,7 +11,6 @@ from itertools import chain
 import cudf
 import cupy as cp
 import numpy as np
-from .dftype import DataFrameConfig, ensure_df_type_set
 import pysubgroup as ps
 
 
@@ -73,8 +72,6 @@ class SelectorBase(ABC):
 
 
 def get_cover_array_and_size(subgroup, data_len=None, data=None):
-    if DataFrameConfig.is_cudf():
-        return(subgroup.representation, subgroup.size_sg)
     if hasattr(subgroup, "representation"):
         cover_arr = subgroup
         size = subgroup.size_sg
@@ -164,15 +161,9 @@ class EqualitySelector(SelectorBase):
         # TODO: this is redundant due to `__new__` and `set_descriptions`
         self._attribute_name = attribute_name
         self._selector_name = selector_name
-        if DataFrameConfig.is_cudf():
-            self._attribute_value = cudf.Series([attribute_value])
-            self.set_descriptions(
-            self._attribute_name, attribute_value, self._selector_name
-        )
-        else:
-            self._attribute_value = attribute_value
-            self.set_descriptions(
-            self._attribute_name, self._attribute_value, self._selector_name
+        self._attribute_value = attribute_value
+        self.set_descriptions(
+        self._attribute_name, self._attribute_value, self._selector_name
         )
 
         super().__init__()
@@ -212,10 +203,9 @@ class EqualitySelector(SelectorBase):
     def __repr__(self):
         return self._query
 
-    @ensure_df_type_set
     def covers(self, data):
-        if DataFrameConfig.is_cudf():
-            return cp.fromDlpack((data[self.attribute_name] == self.attribute_value.iloc[0]).fillna(False).to_dlpack())
+        if isinstance(data, cudf.DataFrame):
+            return cp.fromDlpack((data[self.attribute_name].eq(self.attribute_value)).fillna(False).to_dlpack())
         else:
             import pandas as pd  # pylint: disable=import-outside-toplevel
 
@@ -265,9 +255,8 @@ class NegatedSelector(SelectorBase):
 
         super().__init__()
 
-    @ensure_df_type_set
     def covers(self, data_instance):
-        if DataFrameConfig.is_cudf():
+        if isinstance(data_instance, cudf.DataFrame):
             return cp.logical_not(self._selector.covers(data_instance))
         else:
             return np.logical_not(self._selector.covers(data_instance))
@@ -296,12 +285,8 @@ class IntervalSelector(SelectorBase):
     def __init__(self, attribute_name, lower_bound, upper_bound, selector_name=None):
         assert lower_bound < upper_bound
         # TODO: this is redundant due to `__new__` and `set_descriptions`
-        if DataFrameConfig.is_cudf():
-            self._lower_bound = cudf.Series([lower_bound])
-            self._upper_bound = cudf.Series([upper_bound])
-        else:
-            self._lower_bound = lower_bound
-            self._upper_bound = upper_bound
+        self._lower_bound = lower_bound
+        self._upper_bound = upper_bound
         self._attribute_name = attribute_name
         self.selector_name = selector_name
         self.set_descriptions(attribute_name, lower_bound, upper_bound, selector_name)
@@ -320,12 +305,11 @@ class IntervalSelector(SelectorBase):
     def upper_bound(self):
         return self._upper_bound
 
-    @ensure_df_type_set
     def covers(self, data_instance):
-        if DataFrameConfig.is_cudf():
+        if isinstance(data_instance, cudf.DataFrame):
             column = data_instance[self.attribute_name]
-            lower = cp.fromDlpack((column >= self.lower_bound.iloc[0]).fillna(False).to_dlpack())
-            upper = cp.fromDlpack((column < self.upper_bound.iloc[0]).fillna(False).to_dlpack())
+            lower = cp.fromDlpack((column >= self.lower_bound).fillna(False).to_dlpack())
+            upper = cp.fromDlpack((column < self.upper_bound).fillna(False).to_dlpack())
             return cp.logical_and(lower, upper)
         else:
             val = data_instance[self.attribute_name].to_numpy()
@@ -423,20 +407,13 @@ class IntervalSelector(SelectorBase):
     def selectors(self):
         return (self,)
 
-@ensure_df_type_set
-def create_selectors(data, nbins=5, intervals_only=True, ignore=None, gpu_full = False):
-    if gpu_full:
-        return ps.create_selectors_on_GPU(data, nbins, intervals_only, ignore)
+
+def create_selectors(data, nbins=5, intervals_only=True, ignore=None):
     if ignore is None:
         ignore = []
     sels = create_nominal_selectors(data, ignore)
     sels.extend(create_numeric_selectors(data, nbins, intervals_only, ignore=ignore))
     return sels
-
-#TODO: entry point for horizontal parallelization
-@ensure_df_type_set
-def create_gpu_selectors(data, nbins=5, intervals_only=True, ignore=None):
-    pass
 
 
 def create_nominal_selectors(data, ignore=None):
@@ -459,7 +436,7 @@ def create_nominal_selectors(data, ignore=None):
 
 def create_nominal_selectors_for_attribute(data, attribute_name, dtypes=None):
     nominal_selectors = []
-    if DataFrameConfig.is_cudf():
+    if isinstance(data, cudf.DataFrame):
         for val in data[attribute_name].unique().dropna().to_pandas():
             nominal_selectors.append(EqualitySelector(attribute_name, val))
     else:
@@ -499,8 +476,9 @@ def create_numeric_selectors_for_attribute(
     data, attr_name, nbins=5, intervals_only=True, weighting_attribute=None
 ):
     numeric_selectors=[]
-    if DataFrameConfig.is_cudf():
-        data_not_null = data[data[attr_name].notnull()]
+    if isinstance(data, cudf.DataFrame):
+        #can't handle missing values anyways
+        data_not_null = data
         uniqueValues = cp.unique(data_not_null[attr_name])
         if len(data_not_null)<len(data):
             numeric_selectors.append(EqualitySelector(attr_name, cp.nan))
@@ -592,7 +570,7 @@ class Conjunction(BooleanExpressionBase):
 
     def covers(self, instance):
         # empty description ==> return a list of all '1's
-        if DataFrameConfig.is_cudf():
+        if isinstance(instance, cudf.DataFrame):
             if not self.selectors:
                 return cp.full(len(instance), True, dtype=bool)
             return cp.all(cp.stack([sel.covers(instance) for sel in self._selectors]), axis=0)

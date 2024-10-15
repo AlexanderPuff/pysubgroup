@@ -1,7 +1,5 @@
-import datetime
 import cudf
 import cupy as cp
-import numpy as np
 import pandas
 
 class gpu_task:
@@ -191,7 +189,6 @@ class gpu_dfs(gpu_algorithm):
         while stack.size > 0:
             
             current = stack[-1]
-            print(current)
             stack = stack[:-1]
             depth = cp.sum(current != 0)
             new_sels = get_child_sels(current, self.selectors)
@@ -259,9 +256,11 @@ class gpu_bfs(gpu_algorithm):
                 new_children = get_next_level(chunk, self.int_attributes, depth, self.visited)
                 if self.apriori:
                     new_children = apriori_pruning_bfs(new_children, self.apriori_vec, depth)
+                
                 children.append(new_children)
-                print(parent_cs)
-            
+            #apriori might get rid of all children
+            if not children:
+                return self.prepare_result(self.result)
             children=cp.concatenate(children, axis=0)
                   
             #iterate through chunks for sg evaluation
@@ -275,7 +274,6 @@ class gpu_bfs(gpu_algorithm):
                 if self.apriori:
                     self.apriori_vec.set_visited(chunk[to_explore])
                 sg_depth.append(chunk[to_explore])
-                print(f'explored {j} out of {children.shape[0]}')
                     
             sg_levels.append(cp.concatenate(sg_depth, axis=0))
                 

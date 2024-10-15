@@ -1,6 +1,3 @@
-import datetime
-import numpy as np
-import pysubgroup as ps	
 import cupy as cp
 import cudf
 
@@ -9,9 +6,7 @@ import cudf
 class gpu_search_space:
     def __init__(self, data, target_attribute, target_value, nbins=5, ignore=[]):
         self.data = data
-        
         self.instances = data.shape[0]
-        a = datetime.datetime.now()
         self.sels = cudf.DataFrame({'id': 0,
                                     'attribute': target_attribute,
                                     'low' : 0,
@@ -198,40 +193,3 @@ class statistics_GPU:
     def get_cover_arr_sels(self, sels):
         cover_arr = cp.all(self.search_space.reps[sels], axis = 0)
         return cover_arr
-
-
-#testing area
-def copy_df(df, num_copies):
-    df_list = [df.copy() for _ in range(num_copies)]
-    large_df = cudf.concat(df_list, ignore_index=True)
-    large_df.index=cudf.Series(np.arange(len(large_df)))
-    return large_df
-    
-if __name__ == '__main__':
-    folder = '/home/alexpuff/datasets'
-    spam_csv = '/synth_spam.csv'
-    iris_csv = '/synth_iris.csv'
-    darwin_csv = '/synth_darwin.csv'
-    spam_ignore=['Class', 'word_freq_email']
-    iris_ignore=['class']
-    darwin_ignore=['ID', 'class']
-    #spam_target=ps.BinaryTarget('Class', 1)
-    #iris_target=ps.BinaryTarget('class', 'Iris-virginica')
-    #darwin_target=ps.BinaryTarget('class', 'H')
-    
-    if True:
-        start = datetime.datetime.now()
-        df = cudf.read_csv(folder+darwin_csv,sep="\t", header=0, nrows = 5000)
-        #df = copy_df(df, 2)
-        loaded = datetime.datetime.now()
-        print(f"Data loaded: {loaded - start}")
-        sp = gpu_search_space(df, 'class', 'H', 10, darwin_ignore)
-        task = ps.gpu_task(sp, 1, depth=3, result_set_size=10)
-        bfs = ps.gpu_bfs(task, apriori=False)
-        sp_created = datetime.datetime.now()
-        print(f'Search space created: {sp_created - loaded}')
-        print(bfs.execute())
-        print(f"Execution time: {datetime.datetime.now() - sp_created}")
-        print(f"Total time: {datetime.datetime.now() - start}")
-        
-    
