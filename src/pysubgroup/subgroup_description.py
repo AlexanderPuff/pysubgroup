@@ -205,7 +205,9 @@ class EqualitySelector(SelectorBase):
 
     def covers(self, data):
         if isinstance(data, cudf.DataFrame):
-            column = cp.fromDlpack(data[self.attribute_name].to_dlpack())
+            column = data[self.attribute_name]
+            if column.dtype != object:
+                column = cp.fromDlpack(column.to_dlpack())
             return (column == self.attribute_value)
         else:
             import pandas as pd  # pylint: disable=import-outside-toplevel
