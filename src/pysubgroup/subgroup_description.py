@@ -205,7 +205,8 @@ class EqualitySelector(SelectorBase):
 
     def covers(self, data):
         if isinstance(data, cudf.DataFrame):
-            return cp.fromDlpack((data[self.attribute_name].eq(self.attribute_value)).fillna(False).to_dlpack())
+            column = cp.fromDlpack(data[self.attribute_name].to_dlpack())
+            return (column == self.attribute_value)
         else:
             import pandas as pd  # pylint: disable=import-outside-toplevel
 
@@ -307,11 +308,11 @@ class IntervalSelector(SelectorBase):
 
     def covers(self, data_instance):
         if isinstance(data_instance, cudf.DataFrame):
-            column = data_instance[self.attribute_name]
-            lower = cp.fromDlpack((column.ge(self.lower_bound)).fillna(False).to_dlpack())
+            column = cp.fromDlpack(data_instance[self.attribute_name].to_dlpack())
+            lower = (column >= self.lower_bound)
             if cp.isinf(self.upper_bound):
                 return lower
-            upper = cp.fromDlpack((column.lt(self.upper_bound)).fillna(False).to_dlpack())
+            upper = (column < self.upper_bound)
             return cp.logical_and(lower, upper)
         else:
             val = data_instance[self.attribute_name].to_numpy()
