@@ -44,6 +44,7 @@ def equal_frequency_discretization(
             cleaned_data = data[attribute_name].sparse.sp_values
         if isinstance(cleaned_data, cudf.Series):
             sorted_data = cp.sort(cp.fromDlpack((cleaned_data).dropna().to_dlpack()))
+            _, indices = cp.unique(sorted_data, return_index=True)
             number_instances = len(sorted_data)
         else:
             cleaned_data = cleaned_data[~np.isnan(cleaned_data)]
@@ -57,7 +58,14 @@ def equal_frequency_discretization(
                 val = sorted_data[position]
                 if val not in cutpoints:
                     break
-                position += 1
+                if isinstance(cleaned_data, cudf.Series):
+                    index = cp.searchsorted(indices, cp.array([position]), side="right")
+                    if index < len(indices):
+                        position = indices[index][0]
+                    else:
+                        break
+                else:
+                    position += 1
             if val not in cutpoints:
                 cutpoints.append(val)
     else:

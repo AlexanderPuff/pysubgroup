@@ -308,8 +308,10 @@ class IntervalSelector(SelectorBase):
     def covers(self, data_instance):
         if isinstance(data_instance, cudf.DataFrame):
             column = data_instance[self.attribute_name]
-            lower = cp.fromDlpack((column >= self.lower_bound).fillna(False).to_dlpack())
-            upper = cp.fromDlpack((column < self.upper_bound).fillna(False).to_dlpack())
+            lower = cp.fromDlpack((column.ge(self.lower_bound)).fillna(False).to_dlpack())
+            if cp.isinf(self.upper_bound):
+                return lower
+            upper = cp.fromDlpack((column.lt(self.upper_bound)).fillna(False).to_dlpack())
             return cp.logical_and(lower, upper)
         else:
             val = data_instance[self.attribute_name].to_numpy()
