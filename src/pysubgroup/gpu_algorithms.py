@@ -274,7 +274,9 @@ class gpu_bfs(gpu_algorithm):
                 if self.apriori:
                     self.apriori_vec.set_visited(chunk[to_explore])
                 sg_depth.append(chunk[to_explore])
-                    
+            #everything pruned
+            if not sg_depth:
+                return self.prepare_result(self.result)
             sg_levels.append(cp.concatenate(sg_depth, axis=0))
                 
                 
