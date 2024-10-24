@@ -139,7 +139,7 @@ class statistics_GPU:
         return (statistics['relative_size_sg'].pow(a) * (statistics['target_share_sg'].add(-self.constant_stats['target_share_dataset'].iloc[0])))
     
     def compute_optimistic(self, statistics, a):
-        return statistics['relative_size_sg'].pow(a).multiply(1-self.constant_stats['target_share_dataset'].iloc[0])
+        return (statistics['positives_sg'].truediv(self.constant_stats['size_sg'].iloc[0])).pow(a).multiply(1-self.constant_stats['target_share_dataset'].iloc[0])
     
     
     def sel_conjunction_quality(self, sels, a):
