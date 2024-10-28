@@ -1,19 +1,18 @@
 import cupy as cp
 import cudf
-
 #create the search space on GPU, creating every selector's cover array
 #@ensure_df_type_set
 class gpu_search_space:
-    def __init__(self, data, target_attribute, target_value, nbins=5, ignore=[]):
+    def __init__(self, data, target_attribute, target_low, target_high = None, nbins=5, ignore=[]):
         self.data = data
         self.instances = data.shape[0]
         self.sels = cudf.DataFrame({'id': 0,
                                     'attribute': target_attribute,
-                                    'low' : 0,
-                                    'high': 0,
-                                    'type': 'target'
+                                    'low' : target_low,
+                                    'high': target_high,
+                                    'type': 'Target'
                                     })
-        self.target_repr = self.compute_target_repr(target_attribute, target_value)
+        self.target_repr = self.compute_target_repr(target_attribute, target_low, target_high)
         self.positives = cp.count_nonzero(self.target_repr)
         self.sel_id = 1
         self.create_selectors_on_GPU(nbins, ignore)
@@ -23,8 +22,13 @@ class gpu_search_space:
         del self.data
         
         
-    def compute_target_repr(self, target_attribute, target_value):
-        return cp.from_dlpack((self.data[target_attribute] == target_value).to_dlpack())
+    def compute_target_repr(self, target_attribute, target_low, target_high):
+        if target_high == None:
+            return cp.from_dlpack((self.data[target_attribute] == target_low).to_dlpack())
+        else:
+            lo = cp.from_dlpack((self.data[target_attribute] >= target_low).to_dlpack())
+            hi = cp.from_dlpack((self.data[target_attribute] < target_high).to_dlpack())
+            return cp.logical_and(lo, hi)
     
     def create_selectors_on_GPU(self, nbins=5, ignore=[]):
         self.create_numeric_gpu(nbins, ignore)
