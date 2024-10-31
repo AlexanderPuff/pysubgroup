@@ -3,9 +3,11 @@ import pandas as pd
 
 dir = '/home/alexpuff/runtimes/FullTest/'
 
-cpu = 'cpuCleaned.csv'
-gpu = 'gpuCleaned.csv'
-hor = 'horizontalCleaned.csv'
+iris = 'realisticTests/iris.csv'
+spam = 'realisticTests/spam.csv'
+darwin = 'realisticTests/darwin.csv'
+cook = 'realisticTests/cook.csv'
+delivery = 'realisticTests/delivery.csv'
 
 
 
@@ -27,16 +29,15 @@ def get_avgs(df):
         result.append(times)
     return pd.concat(result, ignore_index=True, axis=1)
 
-cpu_df = get_df(dir+cpu)
-gpu_df = get_df(dir+gpu)
-hor_df = get_df(dir+hor)
-
-dataset = 'Spam'
-plottype = 'semilog'
-
-def filter_df(df, dataset, quality, algorithm, gpu='-'):
-    filtered = df[(df['Dataset']==dataset) & (df['Quality']==quality) & (df['Algorithm']==algorithm) & (df['GPU']==gpu)]
+def filter_df(df, device, quality, algorithm, gpu='-'):
+    filtered = df[(df['Device']==device)&(df['Quality']==quality) & (df['Algorithm']==algorithm) & (df['GPU']==gpu)]
     return filtered
+
+def plot_for_dataset(filepath):
+    cook_df = get_df(filepath)
+    plottype = 'semilog'
+
+
 
 #cpu=get_avgs(filter_df(cpu_df, dataset, 1, 'Apriori'))
 #gpu_2080=get_avgs(filter_df(gpu_df, dataset, 1, 'Apriori', 'NVIDIA GeForce RTX 2080 Ti'))
@@ -44,46 +45,83 @@ def filter_df(df, dataset, quality, algorithm, gpu='-'):
 #hor_2080=get_avgs(filter_df(hor_df, dataset, 1, 'Apriori', 'NVIDIA GeForce RTX 2080 Ti'))
 #hor_6000=get_avgs(filter_df(hor_df, dataset, 1, 'Apriori', 'NVIDIA RTX A6000'))
 
-lengths = pd.unique(cpu_df['Rows'])
+    lengths = [2**n for n in range(1,100)]
 
-cpu_a = get_avgs(filter_df(cpu_df, dataset, 1, 'Apriori'))
-cpu_d = get_avgs(filter_df(cpu_df, dataset, 1, 'DFS'))
-gpu_a = get_avgs(filter_df(gpu_df, dataset, 1, 'Apriori', 'NVIDIA GeForce RTX 2080 Ti'))
-gpu_d = get_avgs(filter_df(gpu_df, dataset, 1, 'DFS', 'NVIDIA GeForce RTX 2080 Ti'))
-hor_a = get_avgs(filter_df(hor_df, dataset, 1, 'Apriori', 'NVIDIA GeForce RTX 2080 Ti'))
-hor_d = get_avgs(filter_df(hor_df, dataset, 1, 'DFS', 'NVIDIA GeForce RTX 2080 Ti'))
+    cpu = get_avgs(filter_df(cook_df,'CPU', 1, 'Apriori'))
+    gpu_a6000 = get_avgs(filter_df(cook_df,'GPU',  1, 'Apriori', 'NVIDIA RTX A6000'))
+    gpu_2080ti = get_avgs(filter_df(cook_df,'GPU',  1, 'Apriori', 'NVIDIA GeForce RTX 2080 Ti'))
+    hor_a6000 = get_avgs(filter_df(cook_df,'Horizontal',  1, 'Apriori', 'NVIDIA RTX A6000'))
+    hor_2080ti = get_avgs(filter_df(cook_df,'Horizontal',  1, 'Apriori', 'NVIDIA GeForce RTX 2080 Ti'))
 #cpu_times = cpu.loc['Search Space'] + cpu.loc['SG Discovery']
 #gpu_2080_times = gpu_2080.loc['Search Space'] + gpu_2080.loc['SG Discovery']
 #gpu_6000_times = gpu_6000.loc['Search Space'] + gpu_6000.loc['SG Discovery']
 #hor_2080_times = hor_2080.loc['Search Space'] + hor_2080.loc['SG Discovery']
 #hor_6000_times = hor_6000.loc['Search Space'] + hor_6000.loc['SG Discovery']
-cpu_a_times = cpu_a.loc['Search Space'] + cpu_a.loc['SG Discovery']
-cpu_d_times = cpu_d.loc['Search Space'] + cpu_d.loc['SG Discovery']
-gpu_a_times = gpu_a.loc['Search Space'] + gpu_a.loc['SG Discovery']
-gpu_d_times = gpu_d.loc['Search Space'] + gpu_d.loc['SG Discovery']
-hor_a_times = hor_a.loc['Search Space'] + hor_a.loc['SG Discovery']
-hor_d_times = hor_d.loc['Search Space'] + hor_d.loc['SG Discovery']
+    cpu_times = cpu.loc['Search Space'] + cpu.loc['SG Discovery']
+    gpu_a6000_times = gpu_a6000.loc['Search Space'] + gpu_a6000.loc['SG Discovery']
+    gpu_2080ti_times = gpu_2080ti.loc['Search Space'] + gpu_2080ti.loc['SG Discovery']
+    hor_a6000_times = hor_a6000.loc['Search Space'] + hor_a6000.loc['SG Discovery']
+    hor_2080ti_times = hor_2080ti.loc['Search Space'] + hor_2080ti.loc['SG Discovery']
 
 
-if plottype == 'loglog':
-    plot = plt.loglog
-if plottype == 'semilog':
-    plot = plt.semilogx
+    if plottype == 'loglog':
+        plot = plt.loglog
+    if plottype == 'semilog':
+        plot = plt.semilogx
 
-plt.figure(figsize=(10, 6))
-plot(lengths[:len(cpu_a_times)], cpu_a_times, label='Apriori', color='blue')
-plot(lengths[:len(cpu_d_times)], cpu_d_times, label='DFS', color='blue',linestyle='--')
-plot(lengths[:len(gpu_a_times)], gpu_a_times, label='Apriori GPU', color='orange')
-plot(lengths[:len(gpu_d_times)], gpu_d_times, label='DFS GPU', color='orange',linestyle='--')
-plot(lengths[:len(hor_a_times)], hor_a_times, label='Apriori Full', color='green')
-plot(lengths[:len(hor_d_times)], hor_d_times, label='DFS Full', color='green',linestyle='--')
+    plt.figure(figsize=(11, 5))
+    plot(lengths[:len(cpu_times)], cpu_times, label='CPU', color='blue')
+    plot(lengths[:len(gpu_2080ti_times)], gpu_2080ti_times, label='2080ti, vertical', color='green',linestyle='--')
+    plot(lengths[:len(gpu_a6000_times)], gpu_a6000_times, label='A6000, vertical', color='orange', linestyle='--')
+    plot(lengths[:len(hor_2080ti_times)], hor_2080ti_times, label='2080ti, full', color='green')
+    plot(lengths[:len(hor_a6000_times)], hor_a6000_times, label='A6000, full', color='orange')
+
+    plt.title('Time For Subgorup Discovery On Delivery ETA Dataset')
+    plt.xlabel('Number of Rows')
+    plt.ylabel('Time (Seconds)')
 
 
-plt.xlabel('Length')
-plt.ylabel('Time (s)')
-#plt.title('Log Plot of CPU and GPU Runtimes for count_nonzero')
-plt.legend()
-plt.grid(True, which="major", ls="--")
+    #plt.title('Log Plot of CPU and GPU Runtimes for count_nonzero')
+    plt.legend()
+    plt.grid(True, which="major", ls="--")
 
-# Save the plot as PDF
-plt.savefig(dir + 'plots/' + dataset + '_' + plottype + '_alg.pdf')
+    # Save the plot as PDF
+    plt.savefig(dir + 'plots/' + 'delivery' + '_' + plottype + '_alg.pdf')
+    
+    
+def plot_multi(paths):
+    titles = ['Iris', 'Spam', 'Darwin']
+    lengths = [2**n for n in range(1,100)]
+    fig, axs = plt.subplots(figsize = (11,11), nrows = len(paths), sharex= True)
+    fig.suptitle('Time For Subgorup Discovery On Synthtically Expanded Datasets')
+    
+    for i in range(len(paths)):
+        df = get_df(dir + paths[i])
+        cpu = get_avgs(filter_df(df,'CPU', 1, 'Apriori'))
+        gpu_a6000 = get_avgs(filter_df(df,'GPU',  1, 'Apriori', 'NVIDIA RTX A6000'))
+        gpu_2080ti = get_avgs(filter_df(df,'GPU',  1, 'Apriori', 'NVIDIA GeForce RTX 2080 Ti'))
+        hor_a6000 = get_avgs(filter_df(df,'Horizontal',  1, 'Apriori', 'NVIDIA RTX A6000'))
+        hor_2080ti = get_avgs(filter_df(df,'Horizontal',  1, 'Apriori', 'NVIDIA GeForce RTX 2080 Ti'))
+        cpu_times = cpu.loc['Search Space'] + cpu.loc['SG Discovery']
+        gpu_a6000_times = gpu_a6000.loc['Search Space'] + gpu_a6000.loc['SG Discovery']
+        gpu_2080ti_times = gpu_2080ti.loc['Search Space'] + gpu_2080ti.loc['SG Discovery']
+        hor_a6000_times = hor_a6000.loc['Search Space'] + hor_a6000.loc['SG Discovery']
+        hor_2080ti_times = hor_2080ti.loc['Search Space'] + hor_2080ti.loc['SG Discovery']
+        axs[i].semilogx(lengths[:len(cpu_times)], cpu_times, label='CPU', color='blue')
+        axs[i].semilogx(lengths[:len(gpu_2080ti_times)], gpu_2080ti_times, label='2080ti, vertical', color='green',linestyle='--')
+        axs[i].semilogx(lengths[:len(gpu_a6000_times)], gpu_a6000_times, label='A6000, vertical', color='orange', linestyle='--')
+        axs[i].semilogx(lengths[:len(hor_2080ti_times)], hor_2080ti_times, label='2080ti, full', color='green')
+        axs[i].semilogx(lengths[:len(hor_a6000_times)], hor_a6000_times, label='A6000, full', color='orange')
+        axs[i].grid(True, which="major", ls="--")
+        axs[i].set_title(titles[i])
+        axs[i].set_ylabel('Time (Seconds)')
+    
+    axs[0].legend(loc='upper left')
+    fig.tight_layout()
+    fig.subplots_adjust(top=0.92)
+    plt.xlabel('Number of Rows')
+    
+    
+    plt.savefig(dir + 'plots/'  + 'synth_multi.pdf')
+
+plot_multi([iris, spam, darwin])

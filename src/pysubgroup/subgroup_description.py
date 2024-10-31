@@ -208,7 +208,9 @@ class EqualitySelector(SelectorBase):
             column = data[self.attribute_name]
             if column.dtype != object:
                 column = cp.fromDlpack(column.to_dlpack())
-            return (column == self.attribute_value)
+                return (column == self.attribute_value)
+            else:
+                return cp.fromDlpack((column == self.attribute_value).to_dlpack())
         else:
             import pandas as pd  # pylint: disable=import-outside-toplevel
 
