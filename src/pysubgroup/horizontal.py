@@ -25,7 +25,7 @@ class GpuSearchSpace:
         self.target_repr = self.compute_target_repr(
             target_attribute, target_low, target_high
         )
-        self.positives = cp.count_nonzero(self.target_repr)
+        self.positives = self.target_repr[self.target_repr].shape[0]
         self.sel_id = 1
 
         # Initialize all other selectors
@@ -71,7 +71,7 @@ class GpuSearchSpace:
             for col in self.data.select_dtypes(include=["number"])
             if col not in ignore
         ]:
-            uniques = cp.unique(self.data[attribute])
+            uniques = cp.from_dlpack(self.data[attribute].unique().dropna().to_dlpack())
 
             # single value column, no selectors needed
             if len(uniques) == 1:
@@ -154,7 +154,7 @@ class GpuSearchSpace:
             for col in self.data.select_dtypes(exclude=["number"])
             if col not in ignore
         ]:
-            uniques = self.data[attribute].unique()
+            uniques = self.data[attribute].unique().dropna()
             if len(uniques) > 1:
 
                 selectors.append(

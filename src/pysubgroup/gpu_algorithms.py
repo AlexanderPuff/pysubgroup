@@ -227,8 +227,8 @@ class GpuAlgorithm:
 
     def add_if_required(self, sgs, qualities, optimistics):
         # Check if newly evaluated subgroups are better than previous best
-        min_q = self.result["quality"].min()
-        addeds = qualities > min_q
+        #min_q = self.result["quality"].min()
+        addeds = qualities > self.result["quality"].min()
         to_add = cudf.DataFrame({"quality": qualities[addeds]})
         lst = []
         for i in range(self.task.depth):
@@ -242,7 +242,7 @@ class GpuAlgorithm:
         )
 
         # Optimistic estimate pruning
-        to_explore = optimistics > min_q
+        to_explore = optimistics > self.result["quality"].min()
         return to_explore
 
     # Below is only for formatting results
@@ -435,7 +435,6 @@ class GpuBfs(GpuAlgorithm):
     def apriori_pruning(self, sgs, depth):
         # Check all parents of subgroups and eliminate those that have a pruned one
         keep = cp.ones((sgs.shape[0]), dtype=bool)
-
         for d in range(depth):
             to_check = cp.copy(sgs)
             to_check[:, d] = 0
@@ -486,11 +485,8 @@ class GpuBfs(GpuAlgorithm):
         stats_1 = self.stats.compute_stats_sels().drop([0])
         q_1 = self.stats.compute_quality(stats_1, self.quality)
         o_1 = self.stats.compute_optimistic(stats_1, self.quality)
-        self.add_if_required(sg_1, q_1, o_1)
+        to_add = sg_1[self.add_if_required(sg_1, q_1, o_1)]
 
-        # Unlikely but just in case a selector is bad enough for optimistic estimate pruning
-        min_q = self.result["quality"].min()
-        to_add = sg_1[o_1 > min_q]
         if self.apriori:
             self.apriori_vec.set_visited(to_add)
         sg_levels.append(to_add)
