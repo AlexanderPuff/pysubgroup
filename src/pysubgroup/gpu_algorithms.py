@@ -3,7 +3,6 @@ import cupy as cp
 import pandas
 from typing import Tuple
 
-
 class GpuTask:
     # Store all relevant parameters for a SG discovery task
     def __init__(
@@ -210,7 +209,7 @@ class GpuAlgorithm:
         self.stats = self.task.search_space.stats
         self.apriori = apriori
 
-        self.result = cudf.DataFrame({"quality": 0})
+        self.result = cudf.DataFrame({"quality": float('-inf')})
         for i in range(self.task.depth):
             col_name = f"sel_{i}"
             self.result[col_name] = 0
@@ -227,7 +226,6 @@ class GpuAlgorithm:
 
     def add_if_required(self, sgs, qualities, optimistics):
         # Check if newly evaluated subgroups are better than previous best
-        #min_q = self.result["quality"].min()
         addeds = qualities > self.result["quality"].min()
         to_add = cudf.DataFrame({"quality": qualities[addeds]})
         lst = []
@@ -498,7 +496,6 @@ class GpuBfs(GpuAlgorithm):
 
             # chunk making children, this is memory intensive and apriori might eliminate enough sgs in the process to keep discovery going
             children = []
-
             for i in range(0, parents.shape[0], parent_cs):
 
                 chunk = parents[i : i + parent_cs]
@@ -542,6 +539,12 @@ class GpuBfs(GpuAlgorithm):
             if not sgs_at_depth:
                 return self.prepare_result(self.result)
 
-            sg_levels.append(cp.concatenate(sgs_at_depth, axis=0))
+            added_sgs=cp.concatenate(sgs_at_depth, axis=0)
+
+            if added_sgs.size == 0:
+                return self.prepare_result(self.result)
+
+            sg_levels.append(added_sgs)
+            
 
         return self.prepare_result(self.result)

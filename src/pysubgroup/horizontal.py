@@ -25,7 +25,7 @@ class GpuSearchSpace:
         self.target_repr = self.compute_target_repr(
             target_attribute, target_low, target_high
         )
-        self.positives = self.target_repr[self.target_repr].shape[0]
+        self.positives = float(cp.count_nonzero(self.target_repr))
         self.sel_id = 1
 
         # Initialize all other selectors
