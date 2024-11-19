@@ -116,6 +116,9 @@ class GpuSearchSpace:
                         values = cp.append(values, maximum)
                     else:
                         values = cp.append(values, cp.inf)
+
+                    if attribute == 'word_freq_receive':
+                        print(values)
                     selectors.append(
                         cudf.DataFrame(
                             {
@@ -253,16 +256,16 @@ class StatisticsGpu:
         return statistics
 
     def compute_quality(self, statistics, a):
-        return statistics["relative_size_sg"].pow(a) * (
+        return (statistics["relative_size_sg"].pow(a) * (
             statistics["target_share_sg"].add(-self.constant_stats.target_share_dataset)
-        )
+            )).fillna(0)
 
     def compute_optimistic(self, statistics, a):
-        return (
-            (statistics["positives_sg"].truediv(self.constant_stats.size_dataset))
-            .pow(a)
-            .multiply(1 - self.constant_stats.target_share_dataset)
-        )
+        opt = (statistics["positives_sg"].truediv(
+            self.constant_stats.size_dataset)).pow(a).multiply(
+            1 - self.constant_stats.target_share_dataset)
+        opt[statistics["positives_sg"] == 0] = 0
+        return opt
 
     def compute_stats_sels(self):
         # Count size and positives of all subgroups defined by one selector
