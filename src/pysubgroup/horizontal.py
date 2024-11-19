@@ -116,9 +116,6 @@ class GpuSearchSpace:
                         values = cp.append(values, maximum)
                     else:
                         values = cp.append(values, cp.inf)
-
-                    if attribute == 'word_freq_receive':
-                        print(values)
                     selectors.append(
                         cudf.DataFrame(
                             {
