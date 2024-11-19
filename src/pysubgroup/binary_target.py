@@ -370,7 +370,6 @@ class StandardQF(SimplePositivesQF, BoundedInterestingnessMeasure):
         if not hasattr(instances_subgroup, "__array_interface__") and (
             instances_subgroup == 0
         ):
-            #if DataFrameConfig.is_cudf: return cp.nan
             return np.nan
         #p_subgroup = np.divide(positives_subgroup, instances_subgroup)
         if instances_subgroup == 0:
