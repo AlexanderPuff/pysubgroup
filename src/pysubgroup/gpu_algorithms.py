@@ -87,7 +87,7 @@ class VisitedVector:
 class ChunkedVisitedVector:
     # Sparse/Chunked version of the above
     # Disclaimer: Claude also wrote this class
-    def __init__(self, sels: int, depth: int, chunk_size: int = 1024):
+    def __init__(self, sels: int, depth: int, chunk_size: int = 64*1024*1024):
         self.sels = sels
         self.depth = depth
         self.chunk_size = chunk_size
