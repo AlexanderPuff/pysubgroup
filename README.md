@@ -4,20 +4,125 @@
 [![Twitter](https://img.shields.io/twitter/url/http/shields.io.svg?style=social&label=Twitter)](https://twitter.com/pysubgroup)
 -->
 
-![Build status](https://github.com/flemmerich/pysubgroup/actions/workflows/ci.yaml/badge.svg)
+<!--![Build status](https://github.com/flemmerich/pysubgroup/actions/workflows/ci.yaml/badge.svg)
 [![ReadTheDocs](https://readthedocs.org/projects/pysubgroup/badge/?version=latest)](https://pysubgroup.readthedocs.io/en/stable/)
 [![Coveralls](https://img.shields.io/coveralls/github/flemmerich/pysubgroup/main.svg)](https://coveralls.io/r/flemmerich/pysubgroup)
 [![PyPI-Server](https://img.shields.io/pypi/v/pysubgroup.svg)](https://pypi.org/project/pysubgroup/)
 [![Conda-Forge](https://img.shields.io/conda/vn/conda-forge/pysubgroup.svg)](https://anaconda.org/conda-forge/pysubgroup)
-[![Monthly Downloads](https://pepy.tech/badge/pysubgroup/month)](https://pepy.tech/project/pysubgroup)
+[![Monthly Downloads](https://pepy.tech/badge/pysubgroup/month)](https://pepy.tech/project/pysubgroup)-->
 
-# pysubgroup
+# Accelerating pysubgroup with GPUs
 
-**pysubgroup** is a Python package that enables subgroup discovery in Python+pandas (scipy stack) data analysis environment. It provides for a lightweight, easy-to-use, extensible and freely available implementation of state-of-the-art algorithms, interestingness measures and presentation options.
+This fork of [**pysubgroup**](https://github.com/flemmerich/pysubgroup) greatly speeds up run times by providing additional, GPU accelerated implementations of subgroup discovery. This update was part of my Master's Thesis at the University of Passau, supervised by professor Lemmerich.
 
-This library is still in a prototype phase. It has, however, been already successfully employed in active application projects.
+Subgroup discovery lends itself well to GPU acceleration: It consists mainly of independent, naturally vectorized computations, for example counting the size of a subgroup (equivalent to summing up a boolean vector) and computing the intersection of two subgroups (logical and between two vectors). The speed-up over the sequential CPU implementation varies based on the dataset and chosen parameters, but consistently stays well above 10x. In the best cases, the GPU is more than 100x faster: For example, Apriori on 4 million rows of the [cooking time](https://github.com/yandex-research/tabred) dataset with 195 features takes only 12s on the GPU, while the CPU needs 11 minutes.
+## Main Updates
 
-## Subgroup Discovery
+I implemented GPU-accelerated subgroup discovery in two steps. The original code mainly uses NumPy for the computations mentioned above, so simply adding their [**CuPy**](https://cupy.dev/) equivalents to the original code is almost enough to get some baseline acceleration going. The data is loaded directly to GPU using [**cuDF**](https://docs.rapids.ai/api/cudf/stable/), a pandas-like package for manipulating data frames directly in VRAM. Using this updated code is as simple as loading the data with cuDF, instead of pandas, see the usage section below.
+
+While this surprisingly simple update already greatly speeds up subgroup discovery in some cases, especially tall datasets with few columns and many rows, an obvious bottleneck was quickly identified: Individual subgroups are only ever evaluated one at a time. The original code explores the search space iteratively or recursively, depending on the algorithm. To this end, I implemented a more extensive update, which now evaluates large amounts of subgroups in parallel, only limited by VRAM. Unlike the simple update this does not reuse original pysubgroup code, full parallelization is contained in the `horizontal.py` and `gpu_algorithms.py` files.
+
+
+
+## Additional Requirements
+
+Of course, to benefit from GPU parallelization a modern, graphics card is required. While other manufacturers provide APIs similar to CUDA, they generally still lack its wide-spread support. Like already mentioned, I chose to implement most changes using CuPy and cuDF, both of which only work on **NVIDIA GPUs with [compute capability](https://developer.nvidia.com/cuda-gpus) 7.0 or higher**. Make sure a proper CUDA environment is set up, with updated GPU drivers and the [**CUDA Toolkit**](https://developer.nvidia.com/cuda-toolkit) installed. Sadly, cuDF only works on **Linux** machines, but Windows users can use a **WSL2** instance as a lightweight virtual environment.
+
+
+## Installation
+
+While this update still consists of pure Python code, the installation is not as straight-forward as before. After cloning this repository, first install **cuDF**, see their [installation instructions](https://docs.rapids.ai/install/), I recommend using conda. Choose your CUDA and Python versions, and select "Choose specific packages" to only install cuDF. This will create a venv, which you can use to install pysubgroup with a simple `pip install .`.
+
+Note: Some WSL2 users get a `CUDA_ERROR_NO_DEVICE (100)` when trying to run the script. To fix this, you need to update your .bashrc file. Open it with nano:
+```
+sudo nano .bashrc
+```
+Insert these lines:
+```
+export LD_LIBRARY_PATH="/usr/lib/wsl/lib/"  
+export NUMBA_CUDA_DRIVER="/usr/lib/wsl/lib/libcuda.so.1"
+```
+And reload the .bashrc:
+```
+source .bashrc
+```
+This solution was found on [stackoverflow](https://stackoverflow.com/questions/77380210/rapids-cannot-import-cudf-error-at-driver-init-call-to-cuinit-results-in-cuda).
+
+## Usage
+Here is how you can activate GPU acceleration while still using largely the same code as before:
+```python
+import pysubgroup as ps
+import cudf
+
+# Load a dataset
+data = cudf.read_csv("path/to/data.csv")
+
+# Specify target
+target = ps.BinaryTarget ('Target_column', Target_value)
+
+# Initialize search space
+searchspace = ps.create_selectors(data, ignore=['Ignored_column'])
+
+# Bundle everything in a task, here with weighted relative accuracy as quality function
+task = ps.SubgroupDiscoveryTask (
+    data,
+    target,
+    searchspace,
+    result_set_size=5,
+    depth=2,
+    qf=ps.WRAccQF()
+    )
+
+# Execute task with one of two algorithms: DFS uses less memory but is a lot slower than Apriori
+result = ps.DFS().execute(task)
+result = ps.Apriori().execute(task)
+```
+Note that only DFS and Apriori support GPU acceleration, and only nominal or interval targets can be specified. Additionally, take extra care of the ignored columns: The target column should always be removed, and columns with missing values are not yet supported.
+
+And for the much faster variant:
+```python
+import pysubgroup as ps
+import cudf
+
+# Load a dataset
+data = cudf.read_csv("path/to/data.csv")
+
+# Initialize search space
+sp = ps.GpuSearchSpace(
+    data, 'Target_column', 
+    target_low = Lower_bound,
+    target_high = Upper_bound,
+    ignore=['Ignored_column']
+    )
+
+# Bundle into task
+task = ps.GpuTask(
+    sp,
+    qf = 1,
+    result_set_size = 5,
+    depth = 2
+    )
+
+# Initialize algorithm
+alg = ps.GpuBfs(task, apriori=True)
+
+# Execute
+result = alg.execute()
+```
+
+Targets are now always intervals, but nominal targets can be specified by leaving target_high blank. Quality functions are specified by a simple coefficient $a \in [0,1]$, with $1$ corresponding to weighted relative accuracy, and $0$ to a simple lift measure. I recommend using breadth-first search with Apriori enabled for the best results, although depth-first search is also supported.
+
+
+ 
+## Limitations
+
+Sadly the GPU libraries used here do generally not support **missing values**, datasets with them will lead to errors. Data types are also restricted: Only numerics support interval type targets and selectors, all other data types only support nominal targets and selectors. This is why, for example, datetime columns should either be converted into a numeric format (to allow intervals), or skipped entirely.
+
+Like already mentioned above, this is not a feature-complete update for pysubgroup. Depth-first search and Apriori, as the two most common algorithms, are the only ones accelerated here. Additionally, numeric targets are not supported.
+
+And finally, runtimes are only faster for certain dataset sizes, with the speed-up factor mainly increasing with row counts. To take full advantage of GPU acceleration, a decent amount of VRAM is  required.
+
+<!--## Subgroup Discovery
 
 Subgroup Discovery is a well established data mining technique that allows you to identify patterns in your data.
 More precisely, the goal of subgroup discovery is to identify descriptions of data subsets that show an interesting distribution with respect to a pre-specified target concept.
@@ -153,4 +258,4 @@ bibtex:
 ## Note
 
 This project has been set up using PyScaffold 4.5. For details and usage
-information on PyScaffold see https://pyscaffold.org/.
+information on PyScaffold see https://pyscaffold.org/.-->
